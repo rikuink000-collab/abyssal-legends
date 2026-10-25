@@ -1,0 +1,16 @@
+{
+  "name": "abyssal-legends",
+  "private": true,
+  "description": "ABYSSAL LEGENDS の自動テスト用設定（ゲーム本体は index.html のみで動作します）",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test tests/smoke.mjs",
+    "fixture": "node tests/extract-fixture.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

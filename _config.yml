@@ -1,0 +1,10 @@
+# GitHub Pages（Jekyll）の公開設定
+# 公開するのはゲーム本体（index.html）と README だけにし、開発・テスト用のファイルは公開サイトに出さない。
+# リポジトリには残るので、GitHub 上では引き続き閲覧できる。
+exclude:
+  - CLAUDE.md
+  - package.json
+  - package-lock.json
+  - tests/
+  - test-results/
+  - node_modules/
