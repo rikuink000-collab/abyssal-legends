@@ -9,10 +9,18 @@
 //           ダンジョン・実績・ガチャ天井・設定など、読み込み後に失われてはいけない項目
 // 削るもの：装備中以外の大量の所持装備、ガチャ履歴の大半、図鑑の敵撃破数、前回の放置結果
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const [src, out = new URL('../private/save-v3.min.json', import.meta.url)] = process.argv.slice(2);
 if (!src) {
   console.error('使い方: node tests/extract-fixture.mjs <書き出しファイル> [出力先]');
+  process.exit(2);
+}
+// 実データ由来の出力をリポジトリのテスト用セーブ（合成データ専用）の場所に置かせない
+const outPath = out instanceof URL ? fileURLToPath(out) : resolve(out);
+if (outPath.startsWith(fileURLToPath(new URL('./fixtures/', import.meta.url)))) {
+  console.error('tests/fixtures/ には合成データだけを置きます。実データの抽出結果は private/ などコミットしない場所に出力してください。');
   process.exit(2);
 }
 

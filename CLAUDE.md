@@ -61,14 +61,19 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
   - 起動・ロード画面の終了・全画面の表示・JavaScript エラーがないこと
   - 保存キーと移行処理の整合性
   - セーブの保存・再読み込み・書き出しファイルの読み込み
-  - `tests/fixtures/save-v3.json` の重要データ（通貨・階層・仲間・装備・転生・実績など）が読み込み後に失われないこと
+  - 合成セーブ `tests/fixtures/save-v3.json` の重要データ（通貨・階層・仲間・装備・転生・実績など）が読み込み後に失われないこと
   - GitHub Pages の公開対象が `index.html` と `README.md` だけであること（`_config.yml` の `exclude` を検証）
   - リポジトリ内のテスト用セーブが合成データ（`_fixture: "synthetic..."`）であり、
     実際のセーブ書き出しファイルが含まれていないこと
 - セーブのテストは、テストごとに新しいブラウザコンテキストと 127.0.0.1 の一時サーバーで行うため、
   実際に遊んでいるセーブには触れない。
-- リポジトリに置くテスト用セーブは合成データだけにする。実データでの確認は手元でだけ行う。
+- **リポジトリに置くテスト用セーブは合成データだけにする。** 実データ由来のデータ（書き出しファイルそのもの、
+  そこから抽出・加工したもの）は、`tests/fixtures/` を含めリポジトリのどこにも置かず、コミットしない。
+  - `tests/fixtures/save-v3.json` はゲームのコード（`AL.State`・`AL.Inv`・`AL.Heroes`）で作った合成データ。
+    作り直すときも合成データで作り、`_fixture` を `synthetic` で始める。実データで差し替えない。
+- 実データでの確認は手元でだけ行う。
   - `AL_SAVE_FILE=<書き出しファイル> npm test` で、手元のファイルをそのまま検証に追加する。
-  - `node tests/extract-fixture.mjs <書き出しファイル>` は最小限のデータを `private/`（`.gitignore` 済み）に書き出す。
-    これも実データ由来なのでコミットしない。
+  - 小さくしたい場合は `node tests/extract-fixture.mjs <書き出しファイル>` で `private/save-v3.min.json`
+    （`private/` は `.gitignore` 済み）に抽出し、`AL_SAVE_FILE=private/save-v3.min.json npm test` で使う。
+    抽出データも実データ由来なのでコミットしない（`tests/fixtures/` への出力はスクリプトが拒否する）。
 - Claude Code のクラウド環境では Chromium が `/opt/pw-browsers` に用意されているため、`npx playwright install` は不要。

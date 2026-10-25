@@ -1,5 +1,5 @@
 {
- "_fixture": "synthetic: generated with the game code (AL.State/AL.Inv/AL.Heroes) and reduced by tests/extract-fixture.mjs. Replace with data extracted from a real export.",
+ "_fixture": "synthetic: generated with the game code (AL.State/AL.Inv/AL.Heroes) and reduced by tests/extract-fixture.mjs. Contains no real player data. Do not replace with real save data; check real saves locally with AL_SAVE_FILE.",
  "version": 3,
  "created": 1788253200000,
  "lastSeen": 1792497600000,
