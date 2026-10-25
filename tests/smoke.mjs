@@ -193,7 +193,7 @@ test('セーブの保存と読み込み（再読み込み後も進行が残る�
 for (const fx of FIXTURES) {
   test(`v3 セーブ（${fx.name}）の重要データが読み込み後に失われない`, async () => {
     const raw = rawData(fx.text);
-    if (raw._fixture?.startsWith('synthetic')) console.log(`# 注意: ${fx.name} は合成データです。実データから作り直してください（tests/extract-fixture.mjs）`);
+    if (raw._fixture?.startsWith('synthetic')) console.log(`# 注意: ${fx.name} は合成データです。実データでの確認は AL_SAVE_FILE で手元から行ってください（リポジトリには入れない）`);
     const { context, page, errors } = await openPhone();
     try {
       // 1) 読み込み処理単体：値がそのまま保たれること
