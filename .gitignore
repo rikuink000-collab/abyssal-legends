@@ -2,5 +2,6 @@ node_modules/
 test-results/
 # 実プレイのセーブデータ（書き出しファイル）はコミットしない
 *.save.json
+abyssal_legends_*.json
 save-*.txt
 /private/
