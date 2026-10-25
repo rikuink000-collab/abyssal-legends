@@ -1,0 +1,970 @@
+{
+ "_fixture": "synthetic: generated with the game code (AL.State/AL.Inv/AL.Heroes) and reduced by tests/extract-fixture.mjs. Replace with data extracted from a real export.",
+ "version": 3,
+ "created": 1788253200000,
+ "lastSeen": 1792497600000,
+ "maxSeen": 1792497600000,
+ "playTime": 360000,
+ "ticketRegenAt": 1788253200000,
+ "currency": {
+  "gold": 98765432109876,
+  "crystals": 12345,
+  "stones": 6789,
+  "shards": 321,
+  "exp": 5500000000000,
+  "tickets": 4,
+  "rebirthPts": 77
+ },
+ "heroes": {
+  "h25": {
+   "lv": 1,
+   "lb": 0,
+   "equip": {
+    "weapon": null,
+    "head": null,
+    "body": null,
+    "arms": null,
+    "legs": null,
+    "acc": null
+   }
+  },
+  "h26": {
+   "lv": 1,
+   "lb": 0,
+   "equip": {
+    "weapon": null,
+    "head": null,
+    "body": null,
+    "arms": null,
+    "legs": null,
+    "acc": null
+   }
+  },
+  "h27": {
+   "lv": 1,
+   "lb": 0,
+   "equip": {
+    "weapon": null,
+    "head": null,
+    "body": null,
+    "arms": null,
+    "legs": null,
+    "acc": null
+   }
+  },
+  "h28": {
+   "lv": 1,
+   "lb": 0,
+   "equip": {
+    "weapon": null,
+    "head": null,
+    "body": null,
+    "arms": null,
+    "legs": null,
+    "acc": null
+   }
+  },
+  "h01": {
+   "lv": 40,
+   "lb": 0,
+   "equip": {
+    "weapon": "imvnc7h0j5ggsg",
+    "head": "imvnc7h0j8jnvr",
+    "body": "imvnc7h0j9930r",
+    "arms": "imvnc7h0j2f7lj",
+    "legs": "imvnc7h0j31z00",
+    "acc": "imvnc7h0j1j6qo"
+   }
+  },
+  "h02": {
+   "lv": 53,
+   "lb": 1,
+   "equip": {
+    "weapon": "imvnc7h0jbcrnw",
+    "head": "imvnc7h0kgiwo8",
+    "body": "imvnc7h0jcf44b",
+    "arms": "imvnc7h0j6czw0",
+    "legs": "imvnc7h0j7b1sq",
+    "acc": "imvnc7h0j41iw0"
+   }
+  },
+  "h03": {
+   "lv": 66,
+   "lb": 2,
+   "equip": {
+    "weapon": null,
+    "head": null,
+    "body": null,
+    "arms": null,
+    "legs": null,
+    "acc": null
+   }
+  },
+  "h04": {
+   "lv": 79,
+   "lb": 3,
+   "equip": {
+    "weapon": null,
+    "head": null,
+    "body": null,
+    "arms": null,
+    "legs": null,
+    "acc": null
+   }
+  },
+  "h05": {
+   "lv": 92,
+   "lb": 4,
+   "equip": {
+    "weapon": null,
+    "head": null,
+    "body": null,
+    "arms": null,
+    "legs": null,
+    "acc": null
+   }
+  },
+  "h06": {
+   "lv": 105,
+   "lb": 5,
+   "equip": {
+    "weapon": null,
+    "head": null,
+    "body": null,
+    "arms": null,
+    "legs": null,
+    "acc": null
+   }
+  },
+  "h07": {
+   "lv": 118,
+   "lb": 0,
+   "equip": {
+    "weapon": null,
+    "head": null,
+    "body": null,
+    "arms": null,
+    "legs": null,
+    "acc": null
+   }
+  },
+  "h08": {
+   "lv": 131,
+   "lb": 1,
+   "equip": {
+    "weapon": null,
+    "head": null,
+    "body": null,
+    "arms": null,
+    "legs": null,
+    "acc": null
+   }
+  },
+  "h09": {
+   "lv": 144,
+   "lb": 2,
+   "equip": {
+    "weapon": null,
+    "head": null,
+    "body": null,
+    "arms": null,
+    "legs": null,
+    "acc": null
+   }
+  }
+ },
+ "party": [
+  "h01",
+  "h02",
+  "h03",
+  "h04",
+  "h05"
+ ],
+ "tower": {
+  "floor": 187,
+  "wave": 2,
+  "maxFloor": 192,
+  "autoAdvance": true,
+  "blockedFloor": 0
+ },
+ "stats": {
+  "kills": 123456,
+  "bossKills": 789,
+  "gachaPulls": 210,
+  "maxFloorEver": 230,
+  "rebirths": 3,
+  "enhances": 456,
+  "dungeonClears": 0,
+  "rushBest": 0,
+  "mythicFound": 0,
+  "idleClaims": 0,
+  "fullSets": 0,
+  "goldEarned": 0,
+  "expEarned": 0,
+  "heroesOwned": 13,
+  "maxLB": 0
+ },
+ "rebirth": {
+  "count": 3,
+  "totalPts": 450,
+  "upgrades": {
+   "power": 1,
+   "vigor": 2,
+   "wisdom": 3
+  }
+ },
+ "dungeons": {
+  "tower": {
+   "maxTier": 7,
+   "clears": 42,
+   "bestTime": 0,
+   "bestCount": 0,
+   "lastTier": 1
+  },
+  "mine": {
+   "maxTier": 0,
+   "clears": 0,
+   "bestTime": 0,
+   "bestCount": 0,
+   "lastTier": 1
+  },
+  "vault": {
+   "maxTier": 0,
+   "clears": 0,
+   "bestTime": 0,
+   "bestCount": 0,
+   "lastTier": 1
+  },
+  "rush": {
+   "maxTier": 0,
+   "clears": 0,
+   "bestTime": 0,
+   "bestCount": 0,
+   "lastTier": 1
+  },
+  "trial": {
+   "maxTier": 0,
+   "clears": 0,
+   "bestTime": 0,
+   "bestCount": 0,
+   "lastTier": 1
+  }
+ },
+ "achievements": {
+  "claimed": {
+   "kills_0": true,
+   "kills_1": true,
+   "kills_2": true,
+   "kills_3": true,
+   "floor_10": true
+  }
+ },
+ "shop": {
+  "day": "2026-9-1",
+  "bought": {}
+ },
+ "settings": {
+  "speed": 4,
+  "dmgNumbers": true,
+  "effects": "high",
+  "autoLevel": true,
+  "autoSell": -1,
+  "autoBoss": true,
+  "notation": "en",
+  "showLog": true,
+  "autoEquipDrops": false
+ },
+ "items": [
+  {
+   "uid": "imvnc7h0j1j6qo",
+   "base": "x_amulet",
+   "rarity": 0,
+   "ilvl": 30,
+   "enh": 0,
+   "main": {
+    "stat": "skillPow",
+    "value": 0.08626319390666337
+   },
+   "subs": [],
+   "set": null,
+   "locked": true
+  },
+  {
+   "uid": "imvnc7h0j2f7lj",
+   "base": "a_glove",
+   "rarity": 0,
+   "ilvl": 31,
+   "enh": 3,
+   "main": {
+    "stat": "atk",
+    "value": 30.857004839032314
+   },
+   "subs": [],
+   "set": null,
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0j31z00",
+   "base": "l_boots",
+   "rarity": 0,
+   "ilvl": 32,
+   "enh": 5,
+   "main": {
+    "stat": "hp",
+    "value": 367.3342379846668
+   },
+   "subs": [],
+   "set": null,
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0j41iw0",
+   "base": "x_amulet",
+   "rarity": 0,
+   "ilvl": 33,
+   "enh": 5,
+   "main": {
+    "stat": "skillPow",
+    "value": 0.07684849335035893
+   },
+   "subs": [],
+   "set": null,
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0j5ggsg",
+   "base": "w_scythe",
+   "rarity": 1,
+   "ilvl": 50,
+   "enh": 0,
+   "main": {
+    "stat": "atk",
+    "value": 423.37439416701994
+   },
+   "subs": [
+    {
+     "stat": "crit",
+     "value": 0.039633960055913915,
+     "rolls": 1
+    }
+   ],
+   "set": null,
+   "locked": true
+  },
+  {
+   "uid": "imvnc7h0j6czw0",
+   "base": "a_glove",
+   "rarity": 1,
+   "ilvl": 51,
+   "enh": 3,
+   "main": {
+    "stat": "atk",
+    "value": 174.36699301259262
+   },
+   "subs": [
+    {
+     "stat": "critDmg",
+     "value": 0.06752422762268946,
+     "rolls": 1
+    }
+   ],
+   "set": null,
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0j7b1sq",
+   "base": "l_sabaton",
+   "rarity": 1,
+   "ilvl": 52,
+   "enh": 6,
+   "main": {
+    "stat": "res",
+    "value": 224.3902111312287
+   },
+   "subs": [
+    {
+     "stat": "skillPow",
+     "value": 0.04557334456169482,
+     "rolls": 1
+    }
+   ],
+   "set": null,
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0j8jnvr",
+   "base": "h_helm",
+   "rarity": 1,
+   "ilvl": 53,
+   "enh": 8,
+   "main": {
+    "stat": "hp",
+    "value": 2997.013869374475
+   },
+   "subs": [
+    {
+     "stat": "crit",
+     "value": 0.03503501124467326,
+     "rolls": 1
+    }
+   ],
+   "set": null,
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0j9930r",
+   "base": "b_leather",
+   "rarity": 2,
+   "ilvl": 70,
+   "enh": 0,
+   "main": {
+    "stat": "def",
+    "value": 1145.4602320898655
+   },
+   "subs": [
+    {
+     "stat": "defP",
+     "value": 0.06136738303894598,
+     "rolls": 1
+    },
+    {
+     "stat": "hp",
+     "value": 2399.3714403759786,
+     "rolls": 1
+    }
+   ],
+   "set": null,
+   "locked": true
+  },
+  {
+   "uid": "imvnc7h0jbcrnw",
+   "base": "w_axe",
+   "rarity": 2,
+   "ilvl": 72,
+   "enh": 6,
+   "main": {
+    "stat": "atk",
+    "value": 3528.620782869354
+   },
+   "subs": [
+    {
+     "stat": "hp",
+     "value": 2750.30722417399,
+     "rolls": 1
+    },
+    {
+     "stat": "def",
+     "value": 351.3299160688476,
+     "rolls": 1
+    }
+   ],
+   "set": null,
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0jcf44b",
+   "base": "b_leather",
+   "rarity": 2,
+   "ilvl": 73,
+   "enh": 9,
+   "main": {
+    "stat": "def",
+    "value": 1432.0477812209222
+   },
+   "subs": [
+    {
+     "stat": "hpP",
+     "value": 0.06138328647547141,
+     "rolls": 1
+    },
+    {
+     "stat": "atkP",
+     "value": 0.07323058705799723,
+     "rolls": 1
+    }
+   ],
+   "set": null,
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0kgiwo8",
+   "base": "h_hood",
+   "rarity": 3,
+   "ilvl": 93,
+   "enh": 9,
+   "main": {
+    "stat": "res",
+    "value": 5552.957709794862
+   },
+   "subs": [
+    {
+     "stat": "atk",
+     "value": 2678.8526530782733,
+     "rolls": 1
+    },
+    {
+     "stat": "atkP",
+     "value": 0.07926248607039973,
+     "rolls": 1
+    },
+    {
+     "stat": "skillPow",
+     "value": 0.09398099256535862,
+     "rolls": 1
+    }
+   ],
+   "set": "moondancer",
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0kldsd3",
+   "base": "b_cloak",
+   "rarity": 5,
+   "ilvl": 130,
+   "enh": 0,
+   "main": {
+    "stat": "hp",
+    "value": 3154187.846367818
+   },
+   "subs": [
+    {
+     "stat": "crit",
+     "value": 0.030798918718024263,
+     "rolls": 1
+    },
+    {
+     "stat": "resP",
+     "value": 0.09871954345955002,
+     "rolls": 1
+    },
+    {
+     "stat": "critDmg",
+     "value": 0.1751148119985908,
+     "rolls": 1
+    },
+    {
+     "stat": "defP",
+     "value": 0.10411296555867276,
+     "rolls": 1
+    }
+   ],
+   "set": "ashking",
+   "locked": true
+  },
+  {
+   "uid": "imvnc7h0khd67c",
+   "base": "h_crown",
+   "rarity": 4,
+   "ilvl": 110,
+   "enh": 0,
+   "main": {
+    "stat": "hp",
+    "value": 358189.26151276263
+   },
+   "subs": [
+    {
+     "stat": "atkP",
+     "value": 0.0890429356062939,
+     "rolls": 1
+    },
+    {
+     "stat": "resP",
+     "value": 0.0814840002864767,
+     "rolls": 1
+    },
+    {
+     "stat": "healPow",
+     "value": 0.08201898921827577,
+     "rolls": 1
+    },
+    {
+     "stat": "atk",
+     "value": 8210.705207313455,
+     "rolls": 1
+    }
+   ],
+   "set": "ashking",
+   "locked": true
+  },
+  {
+   "uid": "imvnc7h0jdkbuk",
+   "base": "w_dagger",
+   "rarity": 3,
+   "ilvl": 90,
+   "enh": 0,
+   "main": {
+    "stat": "atk",
+    "value": 11319.205429196983
+   },
+   "subs": [
+    {
+     "stat": "spd",
+     "value": 0.04655395159136114,
+     "rolls": 1
+    },
+    {
+     "stat": "resP",
+     "value": 0.07315758413503703,
+     "rolls": 1
+    },
+    {
+     "stat": "defP",
+     "value": 0.07020567051611083,
+     "rolls": 1
+    }
+   ],
+   "set": "ironwarden",
+   "locked": true
+  },
+  {
+   "uid": "imvnc7h0ko9dx1",
+   "base": "w_dagger",
+   "rarity": 5,
+   "ilvl": 133,
+   "enh": 9,
+   "main": {
+    "stat": "atk",
+    "value": 464215.09702909976
+   },
+   "subs": [
+    {
+     "stat": "defP",
+     "value": 0.11671879396515791,
+     "rolls": 1
+    },
+    {
+     "stat": "critDmg",
+     "value": 0.13014895477408675,
+     "rolls": 1
+    },
+    {
+     "stat": "hp",
+     "value": 337182.8133065987,
+     "rolls": 1
+    },
+    {
+     "stat": "crit",
+     "value": 0.04904679790981453,
+     "rolls": 1
+    }
+   ],
+   "set": "ashking",
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0kk8h0a",
+   "base": "a_bracer",
+   "rarity": 4,
+   "ilvl": 113,
+   "enh": 9,
+   "main": {
+    "stat": "def",
+    "value": 36852.77644609364
+   },
+   "subs": [
+    {
+     "stat": "critDmg",
+     "value": 0.1354534245637479,
+     "rolls": 1
+    },
+    {
+     "stat": "atkP",
+     "value": 0.07836444644721577,
+     "rolls": 1
+    },
+    {
+     "stat": "resP",
+     "value": 0.08848172106137585,
+     "rolls": 1
+    },
+    {
+     "stat": "skillPow",
+     "value": 0.10196352102556511,
+     "rolls": 1
+    }
+   ],
+   "set": "moondancer",
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0knd6bv",
+   "base": "b_leather",
+   "rarity": 5,
+   "ilvl": 132,
+   "enh": 6,
+   "main": {
+    "stat": "def",
+    "value": 252743.93380805096
+   },
+   "subs": [
+    {
+     "stat": "defP",
+     "value": 0.08386686034234249,
+     "rolls": 1
+    },
+    {
+     "stat": "atkP",
+     "value": 0.06768950520946446,
+     "rolls": 1
+    },
+    {
+     "stat": "hp",
+     "value": 231369.1344366768,
+     "rolls": 1
+    },
+    {
+     "stat": "spd",
+     "value": 0.07071819214314,
+     "rolls": 1
+    }
+   ],
+   "set": "ironwarden",
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0kjegp1",
+   "base": "b_leather",
+   "rarity": 4,
+   "ilvl": 112,
+   "enh": 6,
+   "main": {
+    "stat": "def",
+    "value": 44465.56683511781
+   },
+   "subs": [
+    {
+     "stat": "healPow",
+     "value": 0.08520180948137734,
+     "rolls": 1
+    },
+    {
+     "stat": "atk",
+     "value": 9651.987968613354,
+     "rolls": 1
+    },
+    {
+     "stat": "defP",
+     "value": 0.1016759136865611,
+     "rolls": 1
+    },
+    {
+     "stat": "hpP",
+     "value": 0.06768904240189783,
+     "rolls": 1
+    }
+   ],
+   "set": "ironwarden",
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0kfc9ch",
+   "base": "w_sword",
+   "rarity": 3,
+   "ilvl": 92,
+   "enh": 6,
+   "main": {
+    "stat": "atk",
+    "value": 15317.033238904745
+   },
+   "subs": [
+    {
+     "stat": "crit",
+     "value": 0.04775250906988812,
+     "rolls": 1
+    },
+    {
+     "stat": "atkP",
+     "value": 0.06486744926656246,
+     "rolls": 1
+    },
+    {
+     "stat": "hpP",
+     "value": 0.09698259446894292,
+     "rolls": 1
+    }
+   ],
+   "set": "moondancer",
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0km1c4j",
+   "base": "b_plate",
+   "rarity": 5,
+   "ilvl": 131,
+   "enh": 3,
+   "main": {
+    "stat": "hp",
+    "value": 3818612.612168708
+   },
+   "subs": [
+    {
+     "stat": "defP",
+     "value": 0.1287712856323864,
+     "rolls": 1
+    },
+    {
+     "stat": "crit",
+     "value": 0.05314588653744293,
+     "rolls": 1
+    },
+    {
+     "stat": "def",
+     "value": 40794.940429225346,
+     "rolls": 1
+    },
+    {
+     "stat": "hpP",
+     "value": 0.08736903299038369,
+     "rolls": 1
+    }
+   ],
+   "set": "moondancer",
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0kiermh",
+   "base": "w_axe",
+   "rarity": 4,
+   "ilvl": 111,
+   "enh": 3,
+   "main": {
+    "stat": "atk",
+    "value": 98549.22013028173
+   },
+   "subs": [
+    {
+     "stat": "crit",
+     "value": 0.051626147972188424,
+     "rolls": 1
+    },
+    {
+     "stat": "critDmg",
+     "value": 0.11373595673297335,
+     "rolls": 1
+    },
+    {
+     "stat": "def",
+     "value": 6532.454974630654,
+     "rolls": 1
+    },
+    {
+     "stat": "hp",
+     "value": 45909.35209171438,
+     "rolls": 1
+    }
+   ],
+   "set": "moondancer",
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0ke25n1",
+   "base": "l_greave",
+   "rarity": 3,
+   "ilvl": 91,
+   "enh": 3,
+   "main": {
+    "stat": "def",
+    "value": 7649.878817605671
+   },
+   "subs": [
+    {
+     "stat": "critDmg",
+     "value": 0.10339711583517833,
+     "rolls": 1
+    },
+    {
+     "stat": "hpP",
+     "value": 0.08956818883919947,
+     "rolls": 1
+    },
+    {
+     "stat": "atk",
+     "value": 2175.3659671175915,
+     "rolls": 1
+    }
+   ],
+   "set": "moondancer",
+   "locked": false
+  },
+  {
+   "uid": "imvnc7h0ja5we2",
+   "base": "x_amulet",
+   "rarity": 2,
+   "ilvl": 71,
+   "enh": 3,
+   "main": {
+    "stat": "skillPow",
+    "value": 0.10795103586462895
+   },
+   "subs": [
+    {
+     "stat": "spd",
+     "value": 0.04422027711562586,
+     "rolls": 1
+    },
+    {
+     "stat": "def",
+     "value": 305.7771845073573,
+     "rolls": 1
+    }
+   ],
+   "set": null,
+   "locked": false
+  }
+ ],
+ "gacha": {
+  "pity": {
+   "standard": 37,
+   "pickup": 12
+  },
+  "history": [
+   {
+    "t": 1792497600000,
+    "id": "h01",
+    "rarity": 5,
+    "banner": "standard",
+    "pity": false
+   },
+   {
+    "t": 1792494000000,
+    "id": "h02",
+    "rarity": 5,
+    "banner": "standard",
+    "pity": false
+   },
+   {
+    "t": 1792490400000,
+    "id": "h03",
+    "rarity": 5,
+    "banner": "standard",
+    "pity": false
+   }
+  ],
+  "total": 210
+ },
+ "codex": {
+  "heroes": {
+   "h25": true,
+   "h26": true,
+   "h27": true,
+   "h28": true,
+   "h01": true,
+   "h02": true,
+   "h03": true,
+   "h04": true,
+   "h05": true,
+   "h06": true,
+   "h07": true,
+   "h08": true,
+   "h09": true
+  },
+  "equips": {},
+  "sets": {}
+ },
+ "idle": {
+  "kpm": 12,
+  "lastClaimTs": 1788253200000,
+  "lastResult": null
+ },
+ "runInProgress": null
+}
