@@ -223,6 +223,246 @@ for (const fx of FIXTURES) {
   });
 }
 
+// ===== 画面の改善（敵パネルの固定サイズ・ダンジョン終了後の画面・一括売却） =====
+
+// 戦闘中の敵パネルに架空の敵を表示して、パネルと周りの位置を測る。
+// 描画のあとは UI.current を一時的に別名にして、毎フレームの再描画で本物の敵に戻らないようにする（スクリーンショット用）。
+async function showFakeEnemies(page, spec) {
+  return page.evaluate((spec) => {
+    const D = AL.DATA, b = AL.Game.runner.battle;
+    AL.Game.paused = true;
+    AL.UI.current = 'battle';
+    const els = Object.keys(D.ELEMENTS), sts = Object.keys(D.STATUSES);
+    const fake = spec.map((e, i) => ({ alive: true, isBoss: !!e.boss, name: e.name, element: els[i % els.length],
+      hp: e.hp, maxHp: e.maxHp, statuses: sts.slice(0, e.chips).map((id) => ({ id, dur: 9, stacks: 3 })) }));
+    const real = b.enemies, tr = AL.Game.runner.transition;
+    b.enemies = fake; AL.Game.runner.transition = 0;
+    try { AL.UI.tickBattleScreen(true); } finally { b.enemies = real; AL.Game.runner.transition = tr; }
+    AL.UI.current = '__test';
+    const box = document.getElementById('bs-enemies'), panel = box.closest('.panel'), next = panel.nextElementSibling;
+    const r = (el) => el.getBoundingClientRect();
+    const names = [...box.querySelectorAll('.en-name')], hps = [...box.querySelectorAll('.en-hp')];
+    return {
+      boxH: r(box).height, panelTop: r(panel).top + scrollY, panelH: r(panel).height, nextTop: r(next).top + scrollY,
+      rows: box.querySelectorAll('.en-row').length, rowH: [...box.querySelectorAll('.en-row')].map((x) => r(x).height),
+      // 名前が省略されているか・HP の数値が枠内に収まっているか
+      truncated: names.map((n) => n.scrollWidth > n.clientWidth),
+      hpInside: hps.every((h) => r(h).right <= r(panel).right + 0.5 && r(h).width > 0),
+      scrollable: box.scrollHeight > box.clientHeight,
+      pageOverflowX: document.documentElement.scrollWidth > innerWidth
+    };
+  }, spec);
+}
+
+test('戦闘中の敵パネル：敵の数・名前の長さ・状態異常の数が変わっても大きさと周りの位置が変わらない（スマホ幅）', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await page.evaluate(() => AL.UI.show('battle'));
+    await page.waitForTimeout(300);
+    const long = 'とても長い名前の深淵より這い出た古代の巨大な魔物の王'.repeat(2);
+    const cases = {
+      none: [],
+      one: [{ name: 'スライム', hp: 5, maxHp: 10, chips: 0 }],
+      five: Array.from({ length: 5 }, (_, i) => ({ name: long + i, hp: 123456789012, maxHp: 987654321098, chips: 6, boss: i === 0 })),
+      three: Array.from({ length: 3 }, (_, i) => ({ name: '骸骨兵' + i, hp: 50, maxHp: 100, chips: i * 2 }))
+    };
+    const results = {};
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      for (const [k, spec] of Object.entries(cases)) {
+        results[`${width}:${k}`] = await showFakeEnemies(page, spec);
+        if (k === 'five' || k === 'none') await page.screenshot({ path: `${SHOTS}/phone-enemies-${width}-${k}.png` });
+      }
+      const base = results[`${width}:none`];
+      for (const k of Object.keys(cases)) {
+        const m = results[`${width}:${k}`];
+        assert.equal(m.boxH, base.boxH, `幅${width}・${k}：敵パネルの高さが変わりました（${base.boxH} → ${m.boxH}）`);
+        assert.equal(m.panelH, base.panelH, `幅${width}・${k}：パネルの高さが変わりました`);
+        assert.equal(m.nextTop, base.nextTop, `幅${width}・${k}：下のパネルの位置がずれました`);
+        assert.equal(m.panelTop, base.panelTop, `幅${width}・${k}：パネルの位置がずれました`);
+        assert.ok(!m.pageOverflowX, `幅${width}・${k}：画面が横にはみ出しています`);
+        assert.ok(m.hpInside, `幅${width}・${k}：HP の数値が枠からはみ出しています`);
+        assert.ok(!m.scrollable, `幅${width}・${k}：敵パネルの中身が収まりきっていません`);
+        assert.equal(m.rows, cases[k].length);
+        for (const h of m.rowH) assert.equal(h, 44, `幅${width}・${k}：敵1体分の高さが一定ではありません`);
+      }
+      assert.ok(results[`${width}:five`].truncated.every(Boolean), '長い名前が省略表示されていません');
+      assert.ok(!results[`${width}:one`].truncated.some(Boolean), '短い名前が省略されています');
+    }
+    await page.evaluate(() => { AL.UI.current = 'battle'; AL.Game.paused = false; });
+    await page.setViewportSize({ width: 390, height: 664 });
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+// ダンジョンの進行状況を架空の値にする（mine は難易度3までクリア済み・前回は難易度1、vault は未クリア、trial は未解放）
+async function setDungeonProgress(page) {
+  return page.evaluate(() => {
+    const s = AL.Game.state;
+    s.stats.maxFloorEver = Math.max(s.stats.maxFloorEver, 45);
+    s.rebirth.count = 0;
+    s.currency.tickets = 3;
+    Object.assign(s.dungeons.mine, { maxTier: 3, lastTier: 1, clears: 3 });
+    Object.assign(s.dungeons.vault, { maxTier: 0, lastTier: 1 });
+    Object.assign(s.dungeons.trial, { maxTier: 0, lastTier: 1 });
+  });
+}
+const shownTiers = (page) => page.evaluate(() => {
+  const o = {};
+  for (const d of AL.DATA.DUNGEONS) {
+    if (d.type === 'tower') continue;
+    const btn = document.querySelector(`[data-act="dTier"][data-id="${d.id}"]`);
+    o[d.id] = { shown: btn ? +btn.parentElement.querySelector('b').textContent : null, selected: AL.UI.ui.dTier[d.id],
+      startable: !document.querySelector(`[data-act="dStart"][data-id="${d.id}"]`).disabled };
+  }
+  return o;
+});
+
+test('ダンジョン画面：開くと挑戦できる最高の難易度が選ばれ、未解放・挑戦不可の難易度は選ばれない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    // 新規データ：未解放のダンジョンは難易度1のまま、挑戦ボタンも押せない
+    const fresh = await page.evaluate(() => { AL.UI.show('dungeon'); return JSON.parse(JSON.stringify(AL.Game.state.dungeons)); });
+    let t = await shownTiers(page);
+    for (const id of ['mine', 'vault', 'trial']) assert.deepEqual(t[id], { shown: 1, selected: 1, startable: false }, id);
+    assert.equal(t.rush.selected, 1);
+
+    await setDungeonProgress(page);
+    const before = await page.evaluate(() => JSON.stringify(AL.Game.state.dungeons));
+    await page.evaluate(() => AL.UI.show('battle'));
+    await page.evaluate(() => AL.UI.show('dungeon'));
+    t = await shownTiers(page);
+    assert.deepEqual(t.mine, { shown: 4, selected: 4, startable: true }, 'mine：最高クリア3 → 難易度4（挑戦可能な最高）が選ばれていません');
+    assert.deepEqual(t.vault, { shown: 1, selected: 1, startable: true });
+    assert.deepEqual(t.trial, { shown: 1, selected: 1, startable: false }, '未解放の trial');
+    assert.deepEqual(t.rush, { shown: null, selected: 1, startable: true }, 'ボスラッシュは難易度1固定');
+
+    // ＋を押しても上限を超えない／−で下げた選択は画面にいる間は保たれ、開き直すと最高に戻る
+    await page.click('[data-act="dTier"][data-id="mine"][data-v="1"]');
+    assert.equal((await shownTiers(page)).mine.shown, 4);
+    await page.click('[data-act="dTier"][data-id="mine"][data-v="-1"]');
+    await page.click('[data-act="dTier"][data-id="mine"][data-v="-1"]');
+    assert.equal((await shownTiers(page)).mine.shown, 2);
+    await page.evaluate(() => AL.UI.refresh());
+    await page.waitForTimeout(100);
+    assert.equal((await shownTiers(page)).mine.shown, 2, '再描画で選択が戻ってしまいました');
+    await page.evaluate(() => { AL.UI.show('equip'); AL.UI.show('dungeon'); });
+    assert.equal((await shownTiers(page)).mine.shown, 4, '開き直したときに最高の難易度に戻っていません');
+
+    // 画面を見るだけでは進行状況（最高クリア・前回の難易度など）は変わらない
+    assert.equal(await page.evaluate(() => JSON.stringify(AL.Game.state.dungeons)), before);
+    assert.ok(fresh.mine.maxTier === 0);
+    await page.screenshot({ path: `${SHOTS}/phone-dungeon.png`, fullPage: true });
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('ダンジョン終了後：バトル画面で見ていればダンジョン画面に戻り、次の最高難易度が選ばれる（他の画面では移動しない）', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await setDungeonProgress(page);
+    await page.evaluate(() => AL.UI.show('dungeon'));
+    // 画面のボタンで挑戦開始 → バトル画面へ。勝利で終了させる
+    await page.click('[data-act="dStart"][data-id="mine"]');
+    const started = await page.evaluate(() => ({ cur: AL.UI.current, run: AL.Game.runner.run && { id: AL.Game.runner.run.id, tier: AL.Game.runner.run.tier },
+      tickets: AL.Game.state.currency.tickets, lastTier: AL.Game.state.dungeons.mine.lastTier }));
+    assert.deepEqual(started, { cur: 'battle', run: { id: 'mine', tier: 4 }, tickets: 2, lastTier: 4 });
+    const win = await page.evaluate(() => {
+      const res = AL.Game.runner.finishDungeon(true);
+      return { cur: AL.UI.current, win: res.win, firstClear: res.firstClear, rec: JSON.parse(JSON.stringify(AL.Game.state.dungeons.mine)),
+        mode: AL.Game.runner.mode, modal: !!document.querySelector('#modal-root .modal'), tier: AL.UI.ui.dTier.mine };
+    });
+    assert.equal(win.cur, 'dungeon', 'ダンジョン画面に戻っていません');
+    assert.equal(win.mode, 'tower');
+    assert.ok(win.win && win.firstClear);
+    assert.equal(win.rec.maxTier, 4, '攻略状況が正しく更新されていません');
+    assert.equal(win.rec.clears, 4);
+    assert.ok(win.modal, '結果の表示が出ていません');
+    assert.equal(win.tier, 5, '次に挑戦できる最高の難易度（5）が選ばれていません');
+    await page.screenshot({ path: `${SHOTS}/phone-dungeon-end.png` });
+    await page.evaluate(() => AL.UI.closeModal());
+
+    // 撤退（敗北）でも戻る。攻略状況は変わらない
+    const lose = await page.evaluate(() => {
+      AL.UI.show('battle');
+      AL.Game.runner.startDungeon('vault', 1);
+      AL.Game.runner.abandonDungeon();
+      return { cur: AL.UI.current, rec: JSON.parse(JSON.stringify(AL.Game.state.dungeons.vault)), tier: AL.UI.ui.dTier.vault };
+    });
+    assert.equal(lose.cur, 'dungeon');
+    assert.equal(lose.rec.maxTier, 0);
+    assert.equal(lose.tier, 1);
+    await page.evaluate(() => AL.UI.closeModal());
+
+    // 他の画面（装備）を見ているときは移動しない
+    const other = await page.evaluate(() => {
+      AL.Game.state.currency.tickets = 3;
+      AL.UI.show('battle');
+      AL.Game.runner.startDungeon('mine', 1);
+      AL.UI.show('equip');
+      AL.Game.runner.finishDungeon(true);
+      return { cur: AL.UI.current, rec: JSON.parse(JSON.stringify(AL.Game.state.dungeons.mine)) };
+    });
+    assert.equal(other.cur, 'equip', '他の画面を見ているのに移動しました');
+    assert.equal(other.rec.maxTier, 4, '低い難易度のクリアで最高記録が変わりました');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('一括売却：レジェンド・ミシックまで選べ、装備中・ロック中・セット・選んだより上のレアリティは売らない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    const setup = await page.evaluate(() => {
+      const s = AL.Game.state, D = AL.DATA, Inv = AL.Inv;
+      AL.Game.paused = true; // 確認中に装備が増えないよう戦闘を止める
+      s.items = [];
+      s.settings.autoSell = -1;
+      Object.keys(s.heroes).forEach((h) => D.SLOTS.forEach((sl) => { s.heroes[h].equip[sl] = null; }));
+      const mk = (rarity, extra) => { const it = Inv.generate({ ilvl: 30, rarity, base: 'w_sword' }); it.set = null; Object.assign(it, extra || {}); s.items.push(it); return it; };
+      const free = [0, 1, 2, 3, 4, 5].map((r) => mk(r));
+      const equipped = mk(5); s.heroes[s.party[0]].equip.weapon = equipped.uid;
+      const locked = mk(5, { locked: true });
+      const set = mk(4, { set: D.SET_ORDER[0] });
+      const gold = free.filter((it) => it.rarity <= 4).reduce((a, it) => a + Inv.sellValue(it), 0);
+      return { gold0: s.currency.gold, gold4: gold, keep: [free[5].uid, equipped.uid, locked.uid, set.uid], sold4: free.filter((it) => it.rarity <= 4).map((it) => it.uid) };
+    });
+    await page.evaluate(() => AL.UI.show('equip'));
+    await page.click('[data-act="bulkSell"]');
+    const opts = await page.$$eval('[data-act="bulkSellDo"]', (bs) => bs.map((b) => ({ r: +b.dataset.r, text: b.textContent, disabled: b.disabled })));
+    assert.deepEqual(opts.map((o) => o.r), [0, 1, 2, 3, 4, 5], '選択肢がコモン〜ミシックの6つになっていません');
+    assert.match(opts[4].text, /レジェンド以下\s*5個/);
+    assert.match(opts[5].text, /ミシック以下\s*6個/);
+    assert.match(opts[4].text, new RegExp('\\+' + (await page.evaluate((g) => AL.U.fmt(g), setup.gold4)) + 'G'));
+    await page.screenshot({ path: `${SHOTS}/phone-bulk-sell.png` });
+
+    // レジェンド以下を売却：確認に警告が出て、売却額どおりにゴールドが増える
+    await page.click('[data-act="bulkSellDo"][data-r="4"]');
+    const confirmText = await page.textContent('#modal-root .backdrop:last-child .modal-body');
+    assert.match(confirmText, /レジェンド以上の装備 1個/);
+    await page.click('#modal-root .backdrop:last-child [data-mbtn="1"]');
+    const after = await page.evaluate((eq) => ({ gold: AL.Game.state.currency.gold, uids: AL.Game.state.items.map((it) => it.uid),
+      equipped: AL.Inv.equippedBy(AL.Game.state, eq) }), setup.keep[1]);
+    assert.equal(after.gold, setup.gold0 + setup.gold4, 'ゴールドの加算が売却額と一致しません');
+    for (const u of setup.sold4) assert.ok(!after.uids.includes(u), `${u} が売却されていません`);
+    for (const u of setup.keep) assert.ok(after.uids.includes(u), `${u}（売ってはいけない装備）が売却されました`);
+    assert.ok(after.equipped, '装備中の装備が外れました');
+    await page.evaluate(() => { AL.Game.paused = false; });
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
 // ===== リポジトリの安全チェック（ブラウザ不要） =====
 
 // git で管理されているファイル（コミット予定のものを含む）

@@ -198,6 +198,15 @@ label.toggle:last-child { border-bottom: none; }
 .pc .sts { display: flex; gap: 2px; flex-wrap: wrap; min-height: 14px; margin-top: 2px; }
 .st { font-size: 9px; line-height: 13px; padding: 0 2px; border-radius: 3px; color: #0a0810; font-weight: 800; }
 .st.debuff { outline: 1px solid #000; }
+/* 戦闘中の敵：最大数（MAX_ENEMIES+1 = 5体）分の高さで固定し、敵の数や名前の長さで周りがずれないようにする */
+#bs-enemies { display: flex; flex-direction: column; gap: 4px; height: 236px; overflow-x: hidden; overflow-y: auto; }
+.en-row { flex: 0 0 44px; height: 44px; min-width: 0; overflow: hidden; }
+.en-head { display: flex; align-items: center; gap: 8px; height: 18px; line-height: 18px; font-size: 13px; }
+.en-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.en-hp { flex: none; white-space: nowrap; }
+.en-row .bar { margin-top: 3px; }
+.en-row .sts { display: flex; flex-wrap: nowrap; gap: 2px; height: 13px; margin-top: 2px; overflow: hidden; }
+.en-empty { line-height: 44px; }
 #mini-status { position: sticky; top: var(--head-h); z-index: 20; align-items: center; gap: 8px; padding: 6px 10px; background: rgba(18, 16, 30, 0.96); border-bottom: 1px solid var(--line); font-size: 13px; cursor: pointer; }
 #mini-status .mini-hp { display: flex; gap: 3px; flex: 1; }
 #mini-status .mini-hp .bar { flex: 1; height: 6px; }
@@ -511,7 +520,7 @@ label.toggle:last-child { border-bottom: none; }
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.0.1',
+    GAME_VERSION: '1.0.2',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -2456,8 +2465,10 @@ label.toggle:last-child { border-bottom: none; }
       return it.rarity <= maxRarity && !it.locked && !eq[it.uid] && (includeSets || !it.set);
     });
   };
-  Inv.sellBulk = function (state, maxRarity, includeSets) {
+  // uids を渡すと、その中で今も売却できるものだけを売る（確認中に入手した装備を売らないため）
+  Inv.sellBulk = function (state, maxRarity, includeSets, uids) {
     var list = Inv.sellableList(state, maxRarity, includeSets);
+    if (uids) list = list.filter(function (it) { return uids.indexOf(it.uid) >= 0; });
     var gold = 0, stones = 0, ids = {};
     list.forEach(function (it) { gold += Inv.sellValue(it); stones += Inv.sellStones(it); ids[it.uid] = true; });
     state.items = state.items.filter(function (it) { return !ids[it.uid]; });
@@ -4665,6 +4676,7 @@ label.toggle:last-child { border-bottom: none; }
     UI.current = id;
     document.body.className = document.body.className.replace(/\btab-\S+/g, '').trim() + ' tab-' + id;
     UI.renderNav();
+    if (UI.screens[id].onShow) UI.screens[id].onShow();
     UI.render();
     if (!(opts && opts.keepScroll === false)) G.scrollTo(0, UI.scroll[id] || 0);
   };
@@ -5020,9 +5032,9 @@ label.toggle:last-child { border-bottom: none; }
     if (!en) return;
     var h = b.enemies.filter(function (e) { return e.alive; }).map(function (e) {
       var r = e.hp / e.maxHp;
-      return '<div style="margin-bottom:6px"><div class="row between small"><span>' + (e.isBoss ? '<b class="bad">BOSS</b> ' : '') + UI.elemTag(e.element) + ' ' + esc(e.name) + '</span><span class="num sub">' + U.fmt(e.hp) + ' / ' + U.fmt(e.maxHp) + '</span></div>' +
-        '<div class="bar' + (e.isBoss ? ' boss' : ' hp low') + '"><i style="width:' + (r * 100).toFixed(1) + '%"></i></div><div class="sts" style="display:flex;gap:2px;margin-top:2px">' + UI.statusChips(e) + '</div></div>';
-    }).join('') || '<div class="dim small">' + (R.transition > 0 ? '次の敵へ移動中…' : '—') + '</div>';
+      return '<div class="en-row"><div class="en-head"><span class="en-name">' + (e.isBoss ? '<b class="bad">BOSS</b> ' : '') + UI.elemTag(e.element) + ' ' + esc(e.name) + '</span><span class="en-hp num sub">' + U.fmt(e.hp) + ' / ' + U.fmt(e.maxHp) + '</span></div>' +
+        '<div class="bar' + (e.isBoss ? ' boss' : ' hp low') + '"><i style="width:' + (r * 100).toFixed(1) + '%"></i></div><div class="sts">' + UI.statusChips(e) + '</div></div>';
+    }).join('') || '<div class="en-empty dim small">' + (R.transition > 0 ? '次の敵へ移動中…' : '—') + '</div>';
     en.innerHTML = h;
     var s = R.session, mins = Math.max(1, (Date.now() - s.started) / 60000);
     UI.$('#bs-session').innerHTML = '<div class="reward-list">' +
@@ -5370,7 +5382,7 @@ label.toggle:last-child { border-bottom: none; }
   UI.action('bulkSell', function () {
     var st = UI.st();
     var html = '<div class="small">未装備・未ロックの装備をレアリティで指定して売却します。</div><div class="list mt">' +
-      [0, 1, 2, 3].map(function (r) {
+      D.EQUIP_RARITY.map(function (rd, r) {
         var l = AL.Inv.sellableList(st, r, false), g = 0;
         l.forEach(function (it) { g += AL.Inv.sellValue(it); });
         return '<button class="btn block" data-act="bulkSellDo" data-r="' + r + '"' + (l.length ? '' : ' disabled') + '><span style="color:' + D.EQUIP_RARITY[r].color + '">' + D.EQUIP_RARITY[r].name + '以下</span>　' + l.length + '個<span class="cost">+' + U.fmt(g) + 'G</span></button>';
@@ -5379,9 +5391,11 @@ label.toggle:last-child { border-bottom: none; }
   });
   UI.action('bulkSellDo', function (el) {
     var r = +el.dataset.r, st = UI.st();
-    var l = AL.Inv.sellableList(st, r, false);
-    UI.confirm({ title: '一括売却の確認', html: D.EQUIP_RARITY[r].name + '以下の装備 <b>' + l.length + '個</b> を売却します。よろしいですか？', ok: '売却する', danger: true,
-      onOk: function () { var res = AL.Inv.sellBulk(st, r, false); UI.closeModal('bulk'); UI.toast(res.count + '個売却：+' + U.fmt(res.gold) + 'G' + (res.stones ? ' 強化石+' + res.stones : ''), 'good'); UI.renderCurrency(); } });
+    var l = AL.Inv.sellableList(st, r, false), uids = l.map(function (it) { return it.uid; });
+    var hi = l.filter(function (it) { return it.rarity >= 4; }).length;
+    UI.confirm({ title: '一括売却の確認', html: D.EQUIP_RARITY[r].name + '以下の装備 <b>' + l.length + '個</b> を売却します。よろしいですか？' +
+      (hi ? '<div class="notice danger mt">レジェンド以上の装備 <b>' + hi + '個</b> が含まれます。売却すると元に戻せません。</div>' : ''), ok: '売却する', danger: true,
+      onOk: function () { var res = AL.Inv.sellBulk(st, r, false, uids); UI.closeModal('bulk'); UI.toast(res.count + '個売却：+' + U.fmt(res.gold) + 'G' + (res.stones ? ' 強化石+' + res.stones : ''), 'good'); UI.renderCurrency(); } });
   });
 
   // ===== 装備の詳細・比較 =====
@@ -5615,6 +5629,8 @@ label.toggle:last-child { border-bottom: none; }
   // ===== ダンジョン =====
   UI.register({
     id: 'dungeon', name: 'ダンジョン', icon: '門', nav: 'more',
+    // 開くたびに選択をやり直し、各ダンジョンで挑戦できる最高の難易度を選んだ状態にする
+    onShow: function () { ui.dTier = {}; },
     render: function (el) {
       var st = UI.st(), R = AL.Game.runner;
       AL.Dungeon.regenTickets(st);
@@ -5628,8 +5644,8 @@ label.toggle:last-child { border-bottom: none; }
           if (d.type === 'tower') {
             return '<div class="panel dcard">' + head + '<div class="kv mt"><span>現在／今回の最高</span><b>第' + st.tower.floor + '層 ／ 第' + st.tower.maxFloor + '層</b></div><div class="kv"><span>通算の最高到達</span><b>第' + st.stats.maxFloorEver + '層</b></div></div>';
           }
-          var tier = ui.dTier[d.id] || Math.max(1, rec.lastTier);
           var maxSel = d.type === 'bossrush' ? 1 : rec.maxTier + 1;
+          var tier = ui.dTier[d.id] || maxSel;
           tier = Math.min(tier, maxSel);
           ui.dTier[d.id] = tier;
           var info = '';
@@ -6001,7 +6017,11 @@ label.toggle:last-child { border-bottom: none; }
 
     // ゲームイベント → 画面
     AL.Events.on('idlePending', function () { setTimeout(UI.showIdle, 50); });
-    AL.Events.on('dungeonEnd', function (res) { UI.showDungeonResult(res); UI.refresh(); });
+    AL.Events.on('dungeonEnd', function (res) {
+      // バトル・ダンジョン画面で見ていたときだけ、次の挑戦を選べるようダンジョン画面へ戻す
+      if (UI.current === 'battle' || UI.current === 'dungeon') UI.show('dungeon');
+      UI.showDungeonResult(res); UI.refresh();
+    });
     AL.Events.on('saved', function (r) {
       // 保護による停止は起動時のお知らせと設定画面で伝えるので、自動保存のたびには表示しない
       if (r.ok) { UI.lastSaved = Date.now(); var el = UI.$('#last-saved'); if (el) el.textContent = new Date().toLocaleTimeString(); }
