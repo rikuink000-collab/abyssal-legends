@@ -511,7 +511,7 @@ label.toggle:last-child { border-bottom: none; }
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.0.0',
+    GAME_VERSION: '1.0.1',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -3498,47 +3498,124 @@ label.toggle:last-child { border-bottom: none; }
       try { if (this.available) G.localStorage.setItem(k, v); else mem[k] = v; return true; }
       catch (e) { return false; }
     },
-    remove: function (k) { try { if (this.available) G.localStorage.removeItem(k); else delete mem[k]; } catch (e) { /* noop */ } }
+    remove: function (k) { try { if (this.available) G.localStorage.removeItem(k); else delete mem[k]; } catch (e) { /* noop */ } },
+    // get と違い、読み取りの失敗（{ok:false}）と「キーがない」（{ok:true, value:null}）を区別する
+    peek: function (k) {
+      try { return { ok: true, value: this.available ? G.localStorage.getItem(k) : (k in mem ? mem[k] : null) }; }
+      catch (e) { return { ok: false, value: null }; }
+    }
   };
 
   // ================= セーブ =================
   var Save = AL.Save = {};
   Save.serialize = function (state) { return JSON.stringify(state); };
+
+  // ===== 読み込めないデータの退避と保護 =====
+  // 読み込めなかったデータは「<元のキー>_corrupt_<時刻>」（使用中なら「_<時刻>_<連番>」）に退避する。既存のキーは上書きしない。
+  // 退避を確認できなかったデータは guards に保持して「保護中」とし、そのキーへの保存・削除を止める。
+  // 保護は、退避をやり直して成功を確認できたときだけ解除する（時間の経過・再起動・保存の呼び出しでは解除しない）。
+  // 保護中は元のキーを書き換えないので、再起動しても同じデータを読んで再び退避を試みる。
+  Save.guards = {};
+  Save.QUARANTINE_MAX = 1000;
+  Save.REASONS = {
+    memory: '永続的な保存領域（localStorage）が使えないため',
+    read: '保存領域を読み取れなかったため',
+    write: '保存領域への書き込みに失敗したため（容量不足の可能性）',
+    verify: '書き込んだ内容を確認できなかったため',
+    full: '退避用の名前に空きがないため'
+  };
+  // text を退避する。成功は「書き込み成功」かつ「読み戻した内容が一致」の両方で判定する
+  Save.quarantine = function (key, text, now) {
+    if (!AL.Storage.available) return { ok: false, reason: 'memory' };  // メモリ保存はページを閉じると消えるので退避とみなさない
+    var base = key + '_corrupt_' + Math.floor(now || Date.now());
+    for (var i = 0; i < Save.QUARANTINE_MAX; i++) {
+      var k = i ? base + '_' + i : base;
+      var cur = AL.Storage.peek(k);
+      if (!cur.ok) return { ok: false, reason: 'read' };
+      if (cur.value !== null) continue;                     // 既存の退避データは上書きしない
+      if (!AL.Storage.set(k, text)) return { ok: false, reason: 'write' };
+      var back = AL.Storage.peek(k);
+      return back.ok && back.value === text ? { ok: true, key: k } : { ok: false, reason: 'verify' };
+    }
+    return { ok: false, reason: 'full' };
+  };
+  Save.isProtected = function (key) {
+    if (key) return Object.prototype.hasOwnProperty.call(Save.guards, key);
+    return Object.keys(Save.guards).length > 0;
+  };
+  // 退避して、失敗したら保護する
+  function keepUnreadable(key, text, now) {
+    var q = Save.quarantine(key, text, now);
+    if (!q.ok) Save.guards[key] = text;
+    return q;
+  }
+  // 保護中のデータの退避をやり直す。成功したキーだけ保護を解除する
+  Save.retryProtected = function (now) {
+    var results = Object.keys(Save.guards).map(function (key) {
+      var q = Save.quarantine(key, Save.guards[key], now);
+      if (q.ok) delete Save.guards[key];
+      return { key: key, ok: q.ok, saved: q.key || null, reason: q.reason || null };
+    });
+    return { ok: !Save.isProtected(), results: results };
+  };
+  var MSG_PROTECT = '元データを守るため、退避できるまでセーブを停止しています。設定画面の「セーブ」で退避を再試行してください。';
+
+  // 保存。保護中のキーは書き換えない。backup 指定時は、直前の本体のバックアップを確認できたときだけ本体を書き換える
   Save.write = function (state, opts) {
     opts = opts || {};
+    if (Save.isProtected(C.SAVE_KEY)) return { ok: false, blocked: true, reason: 'protected', size: 0 };
+    if (opts.backup && Save.isProtected(C.BACKUP_KEY)) return { ok: false, blocked: true, reason: 'backup_protected', size: 0, backup: 'protected' };
     var now = opts.now || Date.now();
     state.lastSeen = now;
     state.maxSeen = Math.max(state.maxSeen || 0, now);
     var text = Save.serialize(state);
+    var backup = null;
     if (opts.backup) {
       var prev = AL.Storage.get(C.SAVE_KEY);
-      if (prev) AL.Storage.set(C.BACKUP_KEY, prev);
+      if (!prev) backup = 'none';
+      // 読み込めない本体（退避済み）でバックアップを上書きしない
+      else if (!AL.State.parse(prev, now).ok) backup = 'skipped';
+      else if (AL.Storage.set(C.BACKUP_KEY, prev) && AL.Storage.get(C.BACKUP_KEY) === prev) backup = 'ok';
+      else return { ok: false, reason: 'backup_failed', size: text.length, backup: 'failed' };
     }
     var ok = AL.Storage.set(C.SAVE_KEY, text);
-    return { ok: ok, size: text.length };
+    return { ok: ok, reason: ok ? null : 'write_failed', size: text.length, backup: backup };
   };
-  // 読み込み：本体が壊れていればバックアップを試し、それも駄目なら新規開始
+  // 読み込み：本体が読めなければ本体を退避してからバックアップを試し、それも駄目なら新規開始
   Save.read = function (now) {
+    now = now || Date.now();
     var main = AL.Storage.get(C.SAVE_KEY);
-    if (main) {
-      var r = AL.State.parse(main, now);
-      if (r.ok) return { state: r.state, source: 'main', warnings: r.warnings };
-      var bak = AL.Storage.get(C.BACKUP_KEY);
-      if (bak) {
-        var rb = AL.State.parse(bak, now);
-        if (rb.ok) return { state: rb.state, source: 'backup', warnings: ['セーブデータが破損していたため、バックアップから復元しました'].concat(r.errors) };
+    if (!main) return { state: AL.State.createDefault(now), source: 'new', warnings: [] };
+    var r = AL.State.parse(main, now);
+    if (r.ok) return { state: r.state, source: 'main', warnings: r.warnings };
+    var qm = keepUnreadable(C.SAVE_KEY, main, now);
+    var bak = AL.Storage.get(C.BACKUP_KEY);
+    if (bak) {
+      var rb = AL.State.parse(bak, now);
+      if (rb.ok) {
+        return { state: rb.state, source: 'backup', protected: !qm.ok, warnings: ['セーブデータが破損していたため、バックアップから復元しました'].concat(r.errors).concat([
+          qm.ok ? '読み込めなかった元データは別名（' + qm.key + '）で退避しました'
+            : '読み込めなかった元データを別名で退避できませんでした（' + Save.REASONS[qm.reason] + '）。' + MSG_PROTECT]) };
       }
-      AL.Storage.set(C.SAVE_KEY + '_corrupt_' + Date.now(), main);
-      return { state: AL.State.createDefault(now), source: 'new', warnings: ['セーブデータが読み込めなかったため新しく開始しました（元データは別名で退避済み）'].concat(r.errors) };
+      // バックアップも読めない：バックアップも退避する（退避できなければバックアップの上書きを止める）
+      var qb = keepUnreadable(C.BACKUP_KEY, bak, now);
+      if (!qb.ok) r.errors = r.errors.concat(['バックアップも読み込めず、別名で退避できませんでした（' + Save.REASONS[qb.reason] + '）。退避できるまでバックアップの作成を停止しています。']);
     }
-    return { state: AL.State.createDefault(now), source: 'new', warnings: [] };
+    var head = qm.ok ? 'セーブデータが読み込めなかったため新しく開始しました（元データは別名で退避済み）'
+      : 'セーブデータが読み込めず、元データを別名で退避できませんでした（' + Save.REASONS[qm.reason] + '）。' + MSG_PROTECT;
+    return { state: AL.State.createDefault(now), source: 'new', protected: Save.isProtected(), warnings: [head].concat(r.errors) };
   };
   Save.exportText = function (state) {
     var data = JSON.parse(Save.serialize(state));
     return JSON.stringify({ format: C.EXPORT_FORMAT, version: C.SAVE_VERSION, game: C.GAME_VERSION, savedAt: new Date().toISOString(),
       checksum: U.hash(JSON.stringify(data)), data: data }, null, 1);
   };
-  Save.wipe = function () { AL.Storage.remove(C.SAVE_KEY); AL.Storage.remove(C.BACKUP_KEY); };
+  // 保護中は消さない（退避できていない元データが消えるため）
+  Save.wipe = function () {
+    if (Save.isProtected()) return false;
+    AL.Storage.remove(C.SAVE_KEY); AL.Storage.remove(C.BACKUP_KEY);
+    return true;
+  };
 
   // ================= ゲーム本体 =================
   var Game = AL.Game = {
@@ -3651,29 +3728,37 @@ label.toggle:last-child { border-bottom: none; }
     AL.Events.emit('stateReplaced');
   };
 
+  var MSG_PROTECTED_OP = '読み込めなかった元データを保護中のため実行できません。設定画面の「セーブ」で退避を再試行してください。';
+
   Game.importText = function (text) {
+    if (Save.isProtected()) return { ok: false, blocked: true, errors: [MSG_PROTECTED_OP] };
     var r = AL.State.parse(text, Date.now());
     if (!r.ok) return r;
     // 読み込んだデータの時刻は現在に合わせる（読み込みで放置報酬を発生させない）
     r.state.lastSeen = Date.now();
     r.state.maxSeen = Math.max(r.state.maxSeen, r.state.lastSeen);
-    Game.save({ backup: true });
+    // 現在のデータをバックアップできなければ、取り込みを中止する（現在のデータを失わないため）
+    var s = Game.save({ backup: true });
+    if (!s.ok) return { ok: false, errors: ['現在のデータを保存・バックアップできなかったため、取り込みを中止しました'] };
     Game.replaceState(r.state);
     return r;
   };
 
   Game.resetAll = function () {
-    Save.wipe();
+    if (!Save.wipe()) return { ok: false, msg: MSG_PROTECTED_OP };
     Game.replaceState(AL.State.createDefault(Date.now()));
+    return { ok: true };
   };
 
   Game.rebirth = function () {
+    // 保存できない状態で転生すると、取り消せない変化が保存されないまま残るため止める
+    if (Save.isProtected()) return { ok: false, msg: MSG_PROTECTED_OP };
     var r = AL.Rebirth.perform(Game.state);
     if (r.ok) {
       if (Game.runner.mode === 'dungeon') Game.runner.abandonDungeon();
       Game.runner = new AL.Runner(Game.state);
       Game.runner.start();
-      Game.save({ backup: true });
+      r.saved = Game.save({ backup: true }).ok;
       AL.Events.emit('stateReplaced');
     }
     return r;
@@ -5614,7 +5699,10 @@ label.toggle:last-child { border-bottom: none; }
       check: 'リセット内容を確認し、取り消せないことを理解しました',
       onOk: function () {
         var r = AL.Game.rebirth();
-        if (r.ok) { UI.toast('転生しました！ +' + r.pts + 'pt（第' + r.start + '層から再出発）', 'rare', 4000); UI.renderCurrency(); UI.render(); }
+        if (r.ok) {
+          UI.toast('転生しました！ +' + r.pts + 'pt（第' + r.start + '層から再出発）', 'rare', 4000); UI.renderCurrency(); UI.render();
+          if (r.saved === false) UI.toast('転生後の保存に失敗しました。設定画面から保存を確認してください', 'bad', 5000);
+        }
         else UI.toast(r.msg, 'bad');
       }
     });
@@ -5764,6 +5852,11 @@ label.toggle:last-child { border-bottom: none; }
         tog('autoEquipDrops', '入手時に自動で最適装備', '編成中の仲間に、より強い装備を自動で装着') +
         '<div class="row between" style="min-height:48px"><span>自動売却<div class="tiny dim">セット装備は対象外</div></span><select data-change="setAutoSell"><option value="-1">OFF</option>' + [0, 1, 2, 3].map(function (r) { return '<option value="' + r + '"' + (s.autoSell === r ? ' selected' : '') + '>' + D.EQUIP_RARITY[r].name + '以下</option>'; }).join('') + '</select></div></div>' +
         '<div class="panel"><h3>セーブ</h3><div class="small sub">' + C.AUTOSAVE_SEC + '秒ごと・画面を閉じる時に自動保存しています。<br>最終保存：<span id="last-saved">' + (UI.lastSaved ? new Date(UI.lastSaved).toLocaleTimeString() : '—') + '</span>（データ v' + C.SAVE_VERSION + '）</div>' +
+        (AL.Save.isProtected() ? '<div class="notice danger mt">' + (AL.Save.isProtected(C.SAVE_KEY)
+          ? '<b>セーブを停止しています。</b>読み込めなかった元データを別名で退避できなかったため、元データを守るために保存を止めています。'
+          : '<b>手動保存（バックアップ作成）を停止しています。</b>読み込めなかったバックアップ領域のデータを別名で退避できなかったため、バックアップの上書きを止めています。自動保存は続いています。') +
+          'ストレージの空きを増やしてから「退避を再試行」を押してください。退避に成功すると再開します。</div>' +
+          '<div class="btn-group mt"><button class="btn primary" data-act="retryProtect">退避を再試行</button><button class="btn" data-act="copyProtected">元データを書き出す（コピー）</button></div>' : '') +
         '<div class="btn-group mt"><button class="btn primary" data-act="saveNow">今すぐ保存</button><button class="btn" data-act="exportSave">書き出し（ファイル）</button><button class="btn" data-act="copySave">書き出し（コピー）</button></div>' +
         '<h3 class="mt">読み込み</h3><div class="small sub">書き出したファイル（.json）またはテキストから復元します。読み込む前に内容を検証し、現在のデータはバックアップとして保持されます。</div>' +
         '<div class="btn-group mt"><label class="btn"><input type="file" accept=".json,application/json,text/plain" data-change="importFile" style="display:none">ファイルを選択</label></div>' +
@@ -5782,7 +5875,29 @@ label.toggle:last-child { border-bottom: none; }
   UI.action('setFx', function (el) { UI.st().settings.effects = el.dataset.v; UI.render(); });
   UI.action('setNotation', function (el) { UI.st().settings.notation = el.value; U.notation = el.value; UI.renderCurrency(); UI.toast('表記を変更しました'); });
   UI.action('setAutoSell', function (el) { UI.st().settings.autoSell = +el.value; UI.toast('自動売却：' + (+el.value >= 0 ? D.EQUIP_RARITY[+el.value].name + '以下' : 'OFF')); });
-  UI.action('saveNow', function () { var r = AL.Game.save({ backup: true }); UI.toast(r.ok ? '保存しました' : '保存に失敗しました（容量不足の可能性）', r.ok ? 'good' : 'bad'); });
+  UI.action('saveNow', function () {
+    var r = AL.Game.save({ backup: true });
+    var msg = r.ok ? '保存しました'
+      : r.reason === 'protected' ? '読み込めなかった元データを保護中のため、保存していません'
+      : r.reason === 'backup_protected' ? 'バックアップ領域の元データを保護中のため、手動保存（バックアップ作成）を停止しています'
+      : r.reason === 'backup_failed' ? 'バックアップを作成できなかったため、保存を中止しました（容量不足の可能性）'
+      : '保存に失敗しました（容量不足の可能性）';
+    UI.toast(msg, r.ok ? 'good' : 'bad');
+  });
+  UI.action('retryProtect', function () {
+    var r = AL.Save.retryProtected(Date.now());
+    if (r.ok) {
+      var s = AL.Game.save();
+      UI.toast(s.ok ? '元データを別名で退避しました。保存を再開します' : '元データを退避しましたが、保存に失敗しました', s.ok ? 'good' : 'bad', 5000);
+    } else {
+      UI.toast('退避できませんでした（' + r.results.filter(function (x) { return !x.ok; }).map(function (x) { return AL.Save.REASONS[x.reason] || x.reason; }).join('、') + '）', 'bad', 5000);
+    }
+    UI.render();
+  });
+  UI.action('copyProtected', function () {
+    var text = Object.keys(AL.Save.guards).map(function (k) { return AL.Save.guards[k]; }).join('\n\n');
+    UI.modal({ title: '読み込めなかった元データ（全選択してコピー）', html: '<div class="small sub">書き出しても保護は解除されません。保護の解除には「退避を再試行」の成功が必要です。</div><textarea readonly style="min-height:240px">' + esc(text) + '</textarea>' });
+  });
   UI.action('exportSave', function () {
     AL.Game.save();
     var text = AL.Save.exportText(UI.st());
@@ -5818,7 +5933,7 @@ label.toggle:last-child { border-bottom: none; }
       onOk: function () {
         var r = AL.Game.importText(text);
         if (r.ok) { UI.toast('セーブデータを読み込みました', 'good'); UI.renderCurrency(); UI.show('battle'); }
-        else UI.toast('読み込みに失敗しました', 'bad');
+        else UI.toast((r.errors && r.errors[0]) || '読み込みに失敗しました', 'bad', 5000);
       }
     });
   }
@@ -5841,7 +5956,11 @@ label.toggle:last-child { border-bottom: none; }
       title: 'データの初期化', danger: true, ok: '初期化する',
       html: '<div class="notice danger"><b>すべての進行（仲間・装備・転生・記録）が削除されます。取り消せません。</b></div><div class="small">必要であれば先に「書き出し」でバックアップしてください。</div>',
       check: '全データを削除することを理解しました',
-      onOk: function () { AL.Game.resetAll(); UI.toast('初期化しました'); UI.renderCurrency(); UI.show('battle'); }
+      onOk: function () {
+        var r = AL.Game.resetAll();
+        if (!r.ok) { UI.toast(r.msg, 'bad', 5000); return; }
+        UI.toast('初期化しました'); UI.renderCurrency(); UI.show('battle');
+      }
     });
   });
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -5883,7 +6002,11 @@ label.toggle:last-child { border-bottom: none; }
     // ゲームイベント → 画面
     AL.Events.on('idlePending', function () { setTimeout(UI.showIdle, 50); });
     AL.Events.on('dungeonEnd', function (res) { UI.showDungeonResult(res); UI.refresh(); });
-    AL.Events.on('saved', function (r) { UI.lastSaved = Date.now(); var el = UI.$('#last-saved'); if (el) el.textContent = new Date().toLocaleTimeString(); if (!r.ok) UI.toast('保存に失敗しました（ストレージ容量を確認してください）', 'bad'); });
+    AL.Events.on('saved', function (r) {
+      // 保護による停止は起動時のお知らせと設定画面で伝えるので、自動保存のたびには表示しない
+      if (r.ok) { UI.lastSaved = Date.now(); var el = UI.$('#last-saved'); if (el) el.textContent = new Date().toLocaleTimeString(); }
+      else if (!r.blocked) UI.toast('保存に失敗しました（ストレージ容量を確認してください）', 'bad');
+    });
     AL.Events.on('drop', function (d) {
       if (d.kept && d.item.rarity >= 3) UI.toast((d.item.rarity >= 5 ? '★神話級★ ' : '') + D.EQUIP_RARITY[d.item.rarity].name + '「' + AL.Inv.name(d.item) + '」を入手！', 'rare');
       if (d.reason === 'full') UI.toast('所持数上限のため装備を自動売却しました', 'bad');
