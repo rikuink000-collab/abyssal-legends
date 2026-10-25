@@ -9,10 +9,12 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium, devices } from 'playwright';
 
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const HTML = readFileSync(new URL('../index.html', import.meta.url));
 const SHOTS = fileURLToPath(new URL('../test-results/', import.meta.url));
 
@@ -20,7 +22,7 @@ const SHOTS = fileURLToPath(new URL('../test-results/', import.meta.url));
 const SAVE_KEY = 'abyssal_legends_save';
 const BACKUP_KEY = 'abyssal_legends_save_backup';
 
-// 検証に使うセーブ：リポジトリ内の最小データ ＋（指定があれば）手元の実セーブ
+// 検証に使うセーブ：リポジトリ内の合成データ ＋（指定があれば）手元の実セーブ（実データはリポジトリに入れない）
 const FIXTURES = [{ name: 'tests/fixtures/save-v3.json', text: readFileSync(new URL('./fixtures/save-v3.json', import.meta.url), 'utf8') }];
 if (process.env.AL_SAVE_FILE) FIXTURES.push({ name: 'AL_SAVE_FILE', text: readFileSync(process.env.AL_SAVE_FILE, 'utf8') });
 
@@ -191,7 +193,7 @@ test('セーブの保存と読み込み（再読み込み後も進行が残る�
 for (const fx of FIXTURES) {
   test(`v3 セーブ（${fx.name}）の重要データが読み込み後に失われない`, async () => {
     const raw = rawData(fx.text);
-    if (raw._fixture?.startsWith('synthetic')) console.log(`# 注意: ${fx.name} は合成データです。実データから作り直してください（tests/extract-fixture.mjs）`);
+    if (raw._fixture?.startsWith('synthetic')) console.log(`# 注意: ${fx.name} は合成データです。実データでの確認は AL_SAVE_FILE で手元から行ってください（リポジトリには入れない）`);
     const { context, page, errors } = await openPhone();
     try {
       // 1) 読み込み処理単体：値がそのまま保たれること
@@ -220,3 +222,62 @@ for (const fx of FIXTURES) {
     }
   });
 }
+
+// ===== リポジトリの安全チェック（ブラウザ不要） =====
+
+// git で管理されているファイル（コミット予定のものを含む）
+const trackedFiles = () => execFileSync('git', ['ls-files', '-z', '--cached'], { cwd: ROOT, encoding: 'utf8' }).split('\0').filter(Boolean);
+
+// _config.yml の exclude 一覧（「exclude:」直下の「- 値」だけを読む簡易パーサー）
+function pagesExcludes() {
+  const lines = readFileSync(new URL('../_config.yml', import.meta.url), 'utf8').split('\n');
+  const out = [];
+  let inList = false;
+  for (const line of lines) {
+    if (/^exclude:\s*$/.test(line)) { inList = true; continue; }
+    if (/^include:/.test(line)) throw new Error('_config.yml の include は使わない（公開範囲が広がるため）');
+    if (inList) {
+      const m = line.match(/^\s+-\s+["']?([^"'#]+?)["']?\s*(#.*)?$/);
+      if (m) out.push(m[1]);
+      else if (/^\S/.test(line)) inList = false;
+    }
+  }
+  return out;
+}
+
+// Jekyll（GitHub Pages）の公開判定を再現する：`.` や `_` で始まるパスと exclude に一致するパスは公開されない
+function isPublished(path, excludes) {
+  if (path.split('/').some((seg) => seg.startsWith('.') || seg.startsWith('_'))) return false;
+  return !excludes.some((ex) => {
+    const pat = ex.replace(/\/$/, '');
+    if (pat.includes('*')) return new RegExp('^' + pat.split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*') + '(/|$)').test(path);
+    return path === pat || path.startsWith(pat + '/');
+  });
+}
+
+test('GitHub Pages の公開対象が index.html と README.md だけである', () => {
+  const published = trackedFiles().filter((f) => isPublished(f, pagesExcludes())).sort();
+  assert.deepEqual(published, ['README.md', 'index.html'],
+    '公開サイトに開発用のファイルが出ます。公開しないファイルは _config.yml の exclude に追加してください');
+});
+
+test('テスト用セーブは合成データで、実際のセーブ書き出しファイルがリポジトリに含まれていない', () => {
+  const problems = [];
+  for (const f of trackedFiles()) {
+    const name = f.split('/').pop();
+    if (/^abyssal_legends_.*\.json$/i.test(name) || /\.save\.json$/i.test(name)) problems.push(`${f}: セーブ書き出しファイルの名前です`);
+    if (!/\.(json|txt)$/i.test(f) || f === 'package.json' || f === 'package-lock.json') continue;
+    const text = readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
+    if (text.includes('ABYSSAL_LEGENDS_SAVE')) { problems.push(`${f}: セーブ書き出しファイルの形式です`); continue; }
+    let obj = null;
+    try { obj = JSON.parse(text); } catch { /* JSON でなければ対象外 */ }
+    const looksLikeSave = obj && typeof obj === 'object' && 'version' in obj && 'heroes' in obj && 'currency' in obj;
+    if (looksLikeSave && !String(obj._fixture || '').startsWith('synthetic')) {
+      problems.push(`${f}: 合成データの印（_fixture: "synthetic..."）がないセーブデータです`);
+    }
+  }
+  for (const fx of FIXTURES.filter((x) => x.name !== 'AL_SAVE_FILE')) {
+    if (!String(rawData(fx.text)._fixture || '').startsWith('synthetic')) problems.push(`${fx.name}: 合成データではありません`);
+  }
+  assert.deepEqual(problems, [], '実際のセーブデータはリポジトリに入れず、AL_SAVE_FILE で手元から渡してください');
+});
