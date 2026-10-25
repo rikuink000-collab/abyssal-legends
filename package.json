@@ -7,7 +7,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test tests/smoke.mjs",
+    "test": "node --test tests/smoke.mjs tests/*.test.mjs",
     "fixture": "node tests/extract-fixture.mjs"
   },
   "devDependencies": {
