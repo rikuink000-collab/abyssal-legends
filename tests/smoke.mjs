@@ -70,6 +70,12 @@ async function boot(page) {
   await page.waitForFunction(() => !document.getElementById('loading') && window.AL && AL.Game && AL.Game.state, null, { timeout: 15000 });
 }
 
+// 既存プレイヤーとして遊び始める（導入を終えた状態にして、タイトル画面の CONTINUE と同じ処理で開始する）
+// 導入とは関係のない画面・機能のテストで使う
+async function startAsVeteran(page) {
+  await page.evaluate(() => { AL.Game.state.guide = AL.State.legacyGuide(); AL.UI.startGame(); });
+}
+
 // 起動前に localStorage へセーブを入れておく（同じオリジンの空ページで書き込む）
 async function seedSave(page, text) {
   await page.goto(`${baseURL}/__blank`);
@@ -124,6 +130,8 @@ test('スマートフォン幅で起動し、ロード画面が終わり、JavaS
   const { context, page, errors } = await openPhone();
   try {
     await boot(page);
+    assert.ok(await page.isVisible('#title-screen'), 'タイトル画面が表示されていません');
+    await startAsVeteran(page);
     const info = await page.evaluate(() => ({ w: innerWidth, screens: AL.UI.order.slice(), toastErr: !!document.querySelector('.toast.bad') }));
     assert.equal(info.w, 390, 'スマートフォン相当の画面幅で開けていません');
     // 全画面を順に表示して、描画時のエラーも拾う
@@ -258,6 +266,7 @@ test('戦闘中の敵パネル：敵の数・名前の長さ・状態異常の�
   const { context, page, errors } = await openPhone();
   try {
     await boot(page);
+    await startAsVeteran(page);
     await page.evaluate(() => AL.UI.show('battle'));
     await page.waitForTimeout(300);
     const long = 'とても長い名前の深淵より這い出た古代の巨大な魔物の王'.repeat(2);
@@ -325,6 +334,7 @@ test('ダンジョン画面：開くと挑戦できる最高の難易度が選�
   const { context, page, errors } = await openPhone();
   try {
     await boot(page);
+    await startAsVeteran(page);
     // 新規データ：未解放のダンジョンは難易度1のまま、挑戦ボタンも押せない
     const fresh = await page.evaluate(() => { AL.UI.show('dungeon'); return JSON.parse(JSON.stringify(AL.Game.state.dungeons)); });
     let t = await shownTiers(page);
@@ -367,6 +377,7 @@ test('ダンジョン終了後：バトル画面で見ていればダンジョ�
   const { context, page, errors } = await openPhone();
   try {
     await boot(page);
+    await startAsVeteran(page);
     await setDungeonProgress(page);
     await page.evaluate(() => AL.UI.show('dungeon'));
     // 画面のボタンで挑戦開始 → バトル画面へ。勝利で終了させる
@@ -422,6 +433,7 @@ test('一括売却：レジェンド・ミシックまで選べ、装備中・�
   const { context, page, errors } = await openPhone();
   try {
     await boot(page);
+    await startAsVeteran(page);
     const setup = await page.evaluate(() => {
       const s = AL.Game.state, D = AL.DATA, Inv = AL.Inv;
       AL.Game.paused = true; // 確認中に装備が増えないよう戦闘を止める
@@ -457,6 +469,239 @@ test('一括売却：レジェンド・ミシックまで選べ、装備中・�
     for (const u of setup.keep) assert.ok(after.uids.includes(u), `${u}（売ってはいけない装備）が売却されました`);
     assert.ok(after.equipped, '装備中の装備が外れました');
     await page.evaluate(() => { AL.Game.paused = false; });
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+// ===== はじめての冒険（タイトル画面・初回召喚・はじめての戦い・育成の案内・機能の解放） =====
+
+const guideInfo = (page) => page.evaluate(() => ({
+  step: AL.Game.state.guide.step, mode: AL.Game.runner.mode, cur: AL.UI.current, paused: AL.Game.paused,
+  nav: [...document.querySelectorAll('#nav .nav-item')].map((b) => b.dataset.id),
+  modals: AL.UI.modals.map((m) => m.id || ''), bar: document.body.classList.contains('has-guide') ? document.getElementById('guide-bar').innerText : '',
+  heroes: Object.keys(AL.Game.state.heroes).length, party: AL.Game.state.party.slice(), gold: AL.Game.state.currency.gold,
+  crystals: AL.Game.state.currency.crystals, pulls: AL.Game.state.stats.gachaPulls, history: AL.Game.state.gacha.history.length,
+  items: AL.Game.state.items.length, rewards: { ...AL.Game.state.guide.rewards }, title: !!document.getElementById('title-screen'),
+  // この起動（ページ）での戦闘の獲得分。通常の撃破報酬・ドロップは導入の報酬と区別して数える
+  sessionGold: AL.Game.runner.session.gold, sessionItems: AL.Game.runner.session.items
+}));
+// 戦闘を止めてから状態を記録する（記録と保存の間に撃破報酬・ドロップが入らないようにする）
+const pauseAndInfo = async (page) => { await page.evaluate(() => { AL.Game.paused = true; }); return guideInfo(page); };
+// 再読み込み前の記録 before と比べ、増えた分が「この起動での戦闘の獲得分」だけであること（導入の報酬が重複していないこと）
+function assertNoDuplicateReward(before, after) {
+  assert.equal(after.heroes, before.heroes, '仲間の数が変わりました');
+  assert.equal(after.history, before.history, '召喚履歴が増えました');
+  assert.equal(after.items, before.items + after.sessionItems, `装備が戦闘のドロップ以外で増えました（${before.items} → ${after.items}、ドロップ ${after.sessionItems}）`);
+  assert.ok(Math.abs(after.gold - (before.gold + after.sessionGold)) < 1e-6, `ゴールドが戦闘の報酬以外で増えました（${before.gold} → ${after.gold}、撃破報酬 ${after.sessionGold}）`);
+}
+const titleButtons = (page) => page.$$eval('#title-screen [data-title]', (bs) => Object.fromEntries(bs.map((b) => [b.dataset.title, !b.disabled])));
+async function reloadToTitle(page) {
+  await page.evaluate(() => AL.Game.save());
+  await page.reload();
+  await page.waitForFunction(() => !document.getElementById('loading') && window.AL && AL.Game && AL.Game.state);
+}
+
+test('新規プレイヤー：タイトル → 初回召喚 → はじめての戦い → 報酬 → 育成の案内 → 機能の解放（スマホ幅）', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    // タイトル画面：新規は NEW GAME だけ押せる。戦闘は止まっている
+    assert.deepEqual(await titleButtons(page), { new: true, continue: false });
+    let g = await guideInfo(page);
+    assert.equal(g.paused, true);
+    assert.deepEqual(g.nav, ['battle', 'menu', 'settings'], '導入前から使える機能が多すぎます');
+    await page.screenshot({ path: `${SHOTS}/phone-guide-title.png` });
+
+    await page.click('[data-title="new"]');
+    g = await guideInfo(page);
+    assert.equal(g.title, false);
+    assert.equal(g.step, 'summon');
+    assert.deepEqual(g.modals, ['guideSummon']);
+    assert.equal(g.paused, true, '召喚前に塔の戦闘が進んでいます');
+    await page.screenshot({ path: `${SHOTS}/phone-guide-summon.png` });
+
+    // 初回召喚（既存の召喚演出）→ 固定の仲間が編成に入る
+    await page.click('#modal-root [data-mbtn="1"]');
+    await page.waitForSelector('.gacha-overlay [data-close]', { timeout: 10000 });
+    assert.match(await page.textContent('.gacha-overlay'), /風狼の獣使いフェン/);
+    await page.screenshot({ path: `${SHOTS}/phone-guide-gacha.png` });
+    await page.click('.gacha-overlay [data-close]');
+    g = await guideInfo(page);
+    assert.equal(g.step, 'battle');
+    assert.equal(g.mode, 'tutorial');
+    assert.deepEqual(g.modals, ['guideBattle']);
+    assert.equal(g.party.filter(Boolean).length, 5);
+    assert.ok(g.party.includes('h24'));
+    assert.equal(g.crystals, 1500, '初回召喚で魂晶が減りました');
+    await page.screenshot({ path: `${SHOTS}/phone-guide-battle-intro.png` });
+
+    // はじめての戦い → 勝利の報酬
+    await page.click('#modal-root [data-mbtn="0"]');
+    await page.waitForTimeout(2500);
+    await page.screenshot({ path: `${SHOTS}/phone-guide-battle.png` });
+    await page.waitForFunction(() => AL.UI.topModal('guideWin'), null, { timeout: 60000 });
+    g = await guideInfo(page);
+    assert.equal(g.mode, 'tower');
+    assert.equal(g.step, 'heroes');
+    assert.deepEqual(g.rewards, { summon: true, battle: true });
+    assert.equal(g.items, 1);
+    assert.ok(g.nav.includes('heroes') && !g.nav.includes('gacha'));
+    assert.match(await page.textContent('#modal-root .backdrop:last-child'), /ゴールド\s*\+500/);
+    await page.screenshot({ path: `${SHOTS}/phone-guide-win.png` });
+
+    // 育成の案内：仲間画面 → 装備（編成全員を最適装備）→ 強化
+    await page.click('#modal-root .backdrop:last-child [data-mbtn="0"]');
+    g = await guideInfo(page);
+    assert.equal(g.cur, 'heroes');
+    // 編成が解放される前は、仲間の詳細から編成を変えられない
+    const partyBtns = await page.evaluate(() => { AL.UI.heroDetail('h24'); const n = document.querySelectorAll('#modal-root [data-act="heroToSlot"], #modal-root [data-act="heroOut"]').length; AL.UI.closeModal(); return n; });
+    assert.equal(partyBtns, 0, '編成の解放前に編成を変更できます');
+    assert.equal(g.step, 'equip');
+    assert.match(g.bar, /【装備】/);
+    await page.click('#guide-bar [data-act="nav"]');
+    assert.equal((await guideInfo(page)).cur, 'equip');
+    await page.screenshot({ path: `${SHOTS}/phone-guide-equip.png` });
+    await page.click('[data-act="autoEquipParty"]');
+    await page.waitForFunction(() => AL.Game.state.guide.step === 'enhance', null, { timeout: 5000 });
+    assert.match((await guideInfo(page)).bar, /【強化】/);
+    await page.click('[data-act="itemDetail"]');
+    await page.click('#modal-root [data-act="itemEnh"]');
+    await page.waitForFunction(() => AL.Game.state.guide.step === 'done', null, { timeout: 5000 });
+    // 導入が終わると、ガチャ・編成などが解放され、短い説明が一度だけ出る
+    await page.evaluate(() => AL.UI.closeModal());
+    await page.waitForFunction(() => AL.UI.topModal('guideUnlock'), null, { timeout: 5000 });
+    const unlockText = await page.textContent('#modal-root .backdrop:last-child');
+    for (const name of ['ガチャ', '編成', '実績', '図鑑']) assert.ok(unlockText.includes(name), `${name} の解放の説明がありません`);
+    await page.screenshot({ path: `${SHOTS}/phone-guide-unlock.png` });
+    await page.evaluate(() => AL.UI.closeModal());
+    g = await guideInfo(page);
+    assert.equal(g.bar, '', '導入の完了後も案内バーが出ています');
+    for (const id of ['heroes', 'party', 'equip', 'gacha']) assert.ok(g.nav.includes(id), `${id} が解放されていません`);
+    const partyBtns2 = await page.evaluate(() => { AL.UI.heroDetail('h24'); const n = document.querySelectorAll('#modal-root [data-act="heroToSlot"]').length; AL.UI.closeModal(); return n; });
+    assert.equal(partyBtns2, 5, '編成の解放後に、仲間の詳細から編成を変更できません');
+
+    // 未解放の機能（ショップ：第10層、ダンジョン：第15層、転生：第50層）は開けず、その他メニューでは鍵付きで表示される
+    const locked = await page.evaluate(() => { AL.UI.show('menu'); AL.UI.show('dungeon'); return { cur: AL.UI.current,
+      tiles: [...document.querySelectorAll('.menu-tile.locked')].map((t) => t.textContent) }; });
+    assert.equal(locked.cur, 'menu', '未解放のダンジョン画面が開きました');
+    assert.equal(locked.tiles.length, 3);
+    await page.screenshot({ path: `${SHOTS}/phone-guide-menu-locked.png` });
+    // 到達階層で解放 → 説明が出て開けるようになる
+    await page.evaluate(() => { AL.Game.state.stats.maxFloorEver = 15; });
+    await page.waitForFunction(() => AL.UI.topModal('guideUnlock'), null, { timeout: 5000 });
+    const t2 = await page.textContent('#modal-root .backdrop:last-child');
+    assert.ok(t2.includes('ショップ') && t2.includes('ダンジョン') && !t2.includes('転生'));
+    await page.evaluate(() => { AL.UI.closeModal(); AL.UI.show('dungeon'); });
+    assert.equal((await guideInfo(page)).cur, 'dungeon');
+
+    // 再読み込みしても、初回報酬・解放の説明は繰り返さない
+    const before = await pauseAndInfo(page);
+    await reloadToTitle(page);
+    assert.deepEqual(await titleButtons(page), { new: false, continue: true });
+    await page.click('[data-title="continue"]');
+    await page.waitForTimeout(1200);
+    const after = await guideInfo(page);
+    assert.equal(after.step, 'done');
+    assert.deepEqual(after.modals.filter((m) => m.startsWith('guide')), []);
+    assertNoDuplicateReward(before, after);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('途中再開：初回召喚の直後・はじめての戦いの途中で再読み込みしても、続きから再開し、報酬は重複しない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await page.click('[data-title="new"]');
+    // 召喚演出の途中で閉じた（再読み込みした）場合
+    await page.click('#modal-root [data-mbtn="1"]');
+    await page.waitForSelector('.gacha-overlay');
+    await reloadToTitle(page);
+    assert.deepEqual(await titleButtons(page), { new: false, continue: true }, '途中のデータで NEW GAME が押せます');
+    await page.click('[data-title="continue"]');
+    let g = await guideInfo(page);
+    assert.equal(g.step, 'battle');
+    assert.equal(g.mode, 'tutorial');
+    assert.deepEqual(g.modals, ['guideBattle'], 'はじめての戦いから再開していません');
+    assert.equal(g.heroes, 5);
+    assert.equal(g.history, 1);
+    assert.equal(g.pulls, 1);
+    const lb = await page.evaluate(() => AL.Game.state.heroes.h24.lb);
+    assert.equal(lb, 0, '初回召喚の仲間が重複しました');
+
+    // はじめての戦いの途中で再読み込み → 戦いからやり直し
+    await page.click('#modal-root [data-mbtn="0"]');
+    await page.waitForTimeout(1500);
+    await reloadToTitle(page);
+    await page.click('[data-title="continue"]');
+    g = await guideInfo(page);
+    assert.equal(g.step, 'battle');
+    assert.equal(g.mode, 'tutorial');
+    assert.deepEqual(g.rewards, { summon: true, battle: false });
+    await page.click('#modal-root [data-mbtn="0"]');
+    await page.waitForFunction(() => AL.UI.topModal('guideWin'), null, { timeout: 60000 });
+    const won = await pauseAndInfo(page);
+    await reloadToTitle(page);
+    await page.click('[data-title="continue"]');
+    await page.waitForTimeout(800);
+    g = await guideInfo(page);
+    assert.equal(g.step, 'heroes');
+    assert.equal(g.mode, 'tower');
+    assertNoDuplicateReward(won, g);
+    assert.deepEqual(g.modals.filter((m) => m.startsWith('guide')), []);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('既存セーブ（合成フィクスチャ）：CONTINUE で続きから遊べ、導入・初回報酬は出ず、すべての機能が使える', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await seedSave(page, FIXTURES[0].text);
+    await boot(page);
+    assert.deepEqual(await titleButtons(page), { new: false, continue: true });
+    const before = await page.evaluate(() => JSON.stringify({ h: AL.Game.state.heroes, p: AL.Game.state.party, c: AL.Game.state.currency.crystals, i: AL.Game.state.items.length }));
+    await page.screenshot({ path: `${SHOTS}/phone-guide-title-continue.png` });
+    await page.click('[data-title="continue"]');
+    await page.waitForTimeout(800);
+    const g = await guideInfo(page);
+    assert.equal(g.step, 'done');
+    assert.equal(g.mode, 'tower');
+    assert.equal(g.bar, '');
+    assert.deepEqual(g.modals.filter((m) => m.startsWith('guide')), [], '既存プレイヤーに導入が表示されました');
+    for (const id of ['battle', 'heroes', 'party', 'equip', 'gacha', 'menu']) assert.ok(g.nav.includes(id), `${id} が使えません`);
+    const tiles = await page.evaluate(() => { AL.UI.show('menu'); return document.querySelectorAll('.menu-tile.locked').length; });
+    assert.equal(tiles, 0, '既存プレイヤーに鍵付きの機能があります');
+    const after = await page.evaluate(() => JSON.stringify({ h: AL.Game.state.heroes, p: AL.Game.state.party, c: AL.Game.state.currency.crystals, i: AL.Game.state.items.length }));
+    assert.equal(after, before, '既存プレイヤーの仲間・編成・魂晶・装備が変わりました');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('スキップ：初回召喚の画面から案内を終えると、報酬を一度だけ受け取って通常の進行になる', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await page.click('[data-title="new"]');
+    await page.click('#modal-root [data-mbtn="0"]');                 // スキップ
+    await page.click('#modal-root .backdrop:last-child [data-mbtn="1"]');  // 確認
+    await page.waitForSelector('.gacha-overlay [data-close]', { timeout: 10000 });
+    await page.click('.gacha-overlay [data-close]');
+    const g = await guideInfo(page);
+    assert.equal(g.step, 'done');
+    assert.equal(g.mode, 'tower');
+    assert.equal(g.paused, false);
+    assert.deepEqual(g.rewards, { summon: true, battle: true });
+    assert.equal(g.heroes, 5);
+    assert.equal(g.items, 1);
+    assert.equal(g.bar, '');
     assert.deepEqual(errors, []);
   } finally {
     await context.close();

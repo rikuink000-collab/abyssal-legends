@@ -347,6 +347,22 @@ label.toggle:last-child { border-bottom: none; }
   .pc { padding: 3px; }
 }
 @media (min-width: 601px) { #header .logo .l2 { display: inline; } }
+/* はじめての冒険：タイトル画面・案内バー */
+#title-screen { position: fixed; inset: 0; z-index: 110; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+  background: radial-gradient(circle at 50% 35%, #2a1650, #0a0912 70%); text-align: center; }
+#title-screen .t-logo { font-size: 34px; font-weight: 900; letter-spacing: 0.08em; line-height: 1.1; background: linear-gradient(180deg, #fff, #b89cff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+#title-screen .t-sub { color: var(--sub); font-size: 13px; letter-spacing: 0.3em; }
+#title-screen .t-btns { display: flex; flex-direction: column; gap: 10px; width: min(300px, 100%); margin-top: 18px; }
+#title-screen .t-btns .btn { min-height: 52px; font-size: 17px; letter-spacing: 0.08em; }
+#title-screen .t-note { max-width: 320px; }
+#guide-bar { position: fixed; left: 8px; right: 8px; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 6px); z-index: 25; display: none;
+  padding: 8px 10px; border-radius: 12px; background: #1e143c; border: 1px solid #8b6cff; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6); font-size: 12px; line-height: 1.5; }
+body.has-guide #guide-bar { display: block; }
+body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 110px); }
+#guide-bar .g-row { display: flex; gap: 8px; align-items: center; margin-top: 4px; flex-wrap: wrap; }
+#guide-bar .g-skip { margin-left: auto; background: none; border: none; color: var(--sub); font-size: 12px; text-decoration: underline; padding: 6px 2px; cursor: pointer; }
+.menu-tile.locked { opacity: 0.45; }
+.menu-tile .lock { display: block; font-size: 10px; color: var(--sub); }
 
 </style>
 </head>
@@ -520,7 +536,7 @@ label.toggle:last-child { border-bottom: none; }
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.0.2',
+    GAME_VERSION: '1.1.0',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -603,7 +619,27 @@ label.toggle:last-child { border-bottom: none; }
     // ---- ダンジョン ----
     TICKETS: { MAX: 5, REGEN_MIN: 30, START: 3 },
 
-    START: { gold: 300, crystals: 1500, stones: 20, heroes: ['h25', 'h26', 'h27', 'h28'] }
+    START: { gold: 300, crystals: 1500, stones: 20, heroes: ['h25', 'h26', 'h27', 'h28'] },
+
+    // ---- はじめての冒険（新規プレイヤー向けの導入） ----
+    // STEPS の順に進む。既存のセーブ（guide 項目なし）は導入を終えた扱いになり、すべての機能が使える。
+    GUIDE: {
+      STEPS: ['title', 'summon', 'battle', 'heroes', 'equip', 'enhance', 'done'],
+      FIRST_HERO: 'h24',                                  // 初回召喚で必ず仲間になる（★4 風狼の獣使いフェン）
+      BATTLE_REWARD: { gold: 500, exp: 600, item: { rarity: 2, base: 'w_sword', ilvl: 1 } },
+      // 機能の解放条件：step（この段階に達したら）と floor（通算の最高到達階層。orRebirth なら転生済みでも可）
+      FEATURES: [
+        { id: 'heroes', step: 'heroes' },
+        { id: 'equip', step: 'equip' },
+        { id: 'gacha', step: 'done' },
+        { id: 'party', step: 'done' },
+        { id: 'achievements', step: 'done' },
+        { id: 'codex', step: 'done' },
+        { id: 'shop', step: 'done', floor: 10 },
+        { id: 'dungeon', step: 'done', floor: 15 },
+        { id: 'rebirth', step: 'done', floor: 50, orRebirth: true }
+      ]
+    }
   };
 
   // ---- スケーリング関数 ----
@@ -1387,7 +1423,9 @@ label.toggle:last-child { border-bottom: none; }
       settings: { speed: 1, dmgNumbers: true, effects: 'high', autoLevel: true, autoSell: -1, autoBoss: true,
         notation: 'jp', showLog: true, autoEquipDrops: false },
       idle: { kpm: C.IDLE.DEFAULT_KPM, lastClaimTs: now, lastResult: null },
-      runInProgress: null
+      runInProgress: null,
+      // 導入の進行状況。rewards は初回召喚・初回戦闘の報酬を受け取ったか（二重に受け取らないため）
+      guide: { step: 'title', rewards: { summon: false, battle: false }, seen: {}, legacy: false }
     };
     D.DUNGEONS.forEach(function (d) { s.dungeons[d.id] = { maxTier: 0, clears: 0, bestTime: 0, bestCount: 0, lastTier: 1 }; });
     C.START.heroes.forEach(function (id, i) {
@@ -1615,8 +1653,23 @@ label.toggle:last-child { border-bottom: none; }
     s.idle.lastClaimTs = num(id.lastClaimTs, s.lastSeen, 0);
     s.idle.lastResult = isObj(id.lastResult) ? id.lastResult : null;
     s.runInProgress = (typeof raw.runInProgress === 'string' && D.DUNGEONS.some(function (d) { return d.id === raw.runInProgress; })) ? raw.runInProgress : null;
+    s.guide = State.sanitizeGuide(raw.guide);
     s.version = C.SAVE_VERSION;
     return s;
+  };
+
+  // 導入の進行状況。guide 項目がない（この機能より前の）セーブは、導入を終えた既存プレイヤーとして扱う
+  State.legacyGuide = function () {
+    var seen = {};
+    C.GUIDE.FEATURES.forEach(function (f) { seen[f.id] = true; });
+    return { step: 'done', rewards: { summon: true, battle: true }, seen: seen, legacy: true };
+  };
+  State.sanitizeGuide = function (g) {
+    if (!isObj(g)) return State.legacyGuide();
+    var rw = isObj(g.rewards) ? g.rewards : {}, seen = {};
+    if (isObj(g.seen)) C.GUIDE.FEATURES.forEach(function (f) { if (g.seen[f.id] === true) seen[f.id] = true; });
+    return { step: C.GUIDE.STEPS.indexOf(g.step) >= 0 ? g.step : 'done', rewards: { summon: rw.summon === true, battle: rw.battle === true },
+      seen: seen, legacy: g.legacy === true };
   };
 
   // 文字列 → 状態（検証付き）。成功時 {ok:true, state, warnings}、失敗時 {ok:false, errors}
@@ -2940,7 +2993,7 @@ label.toggle:last-child { border-bottom: none; }
   // ================= Runner =================
   function Runner(state) {
     this.state = state;
-    this.mode = 'tower';      // tower | dungeon
+    this.mode = 'tower';      // tower | dungeon | tutorial（導入の専用戦闘）
     this.run = null;          // ダンジョン挑戦中の情報
     this.acc = 0;
     this.transition = 0;      // ウェーブ間の移動時間（ゲーム内秒）
@@ -2962,6 +3015,7 @@ label.toggle:last-child { border-bottom: none; }
 
   RP.currentFloor = function () {
     if (this.mode === 'dungeon' && this.run) return this.run.floor;
+    if (this.mode === 'tutorial') return 1;
     return this.state.tower.floor;
   };
 
@@ -3050,6 +3104,7 @@ label.toggle:last-child { border-bottom: none; }
   RP.onCleared = function () {
     this.battle.status = 'idle';
     if (this.mode === 'dungeon') { this.dungeonWaveCleared(); return; }
+    if (this.mode === 'tutorial') { this.finishTutorial(); return; }
     var t = this.state.tower, st = this.state;
     t.wave++;
     var floorDone = t.wave >= Progress.wavesFor(t.floor);
@@ -3079,12 +3134,20 @@ label.toggle:last-child { border-bottom: none; }
   RP.nextWave = function () {
     this.transition = 0;
     if (this.mode === 'dungeon') this.startDungeonWave();
+    else if (this.mode === 'tutorial') this.startTutorialWave();
     else this.startTowerWave();
   };
 
   RP.onFailed = function (why) {
     this.battle.status = 'idle';
     if (this.mode === 'dungeon') { this.finishDungeon(false, why); return; }
+    if (this.mode === 'tutorial') {
+      // 導入の戦闘は、負けても回復してやり直す
+      this.battle.healAllies(true);
+      this.battle.addLog('態勢を立て直して、もう一度挑みます', 'down');
+      this.transition = C.BATTLE.WAVE_TRANSITION;
+      return;
+    }
     var t = this.state.tower;
     var failed = t.floor;
     t.blockedFloor = failed;
@@ -3111,6 +3174,7 @@ label.toggle:last-child { border-bottom: none; }
     this.state.tower.autoAdvance = !!on;
   };
   RP.gotoFloor = function (f) {
+    if (this.mode === 'tutorial') return;
     var t = this.state.tower;
     f = U.clamp(Math.floor(f), 1, t.maxFloor);
     t.floor = f; t.wave = 0;
@@ -3152,10 +3216,47 @@ label.toggle:last-child { border-bottom: none; }
     return out.filter(function (k, i) { return out.indexOf(k) === i; });
   };
 
+  // ---- 導入の専用戦闘（新規プレイヤーの最初の戦い） ----
+  // 報酬は Guide.battleReward で一度だけ付与する。終わると無限の深淵塔に戻る。
+  Progress.tutorialEnemies = function () {
+    // 戦闘画面を見る時間があるよう、HP を通常の第1層の敵の4倍にしている（攻撃力などはそのまま）
+    return [['e_slime', '訓練場の腐肉スライム'], ['e_rat', '訓練場の屍喰いネズミ'], ['e_slime', '訓練場の腐肉スライム']].map(function (e) {
+      var sp = Progress.enemySpec(e[0], 1);
+      sp.stats.hp = U.safe(sp.stats.hp * 4);
+      sp.name = e[1];
+      return sp;
+    });
+  };
+  RP.startTutorial = function () {
+    if (this.mode === 'dungeon') return false;
+    this.mode = 'tutorial';
+    this.run = null;
+    this.transition = 0;
+    this.battle.healAllies(true);
+    this.startTutorialWave();
+    return true;
+  };
+  RP.startTutorialWave = function () {
+    this.battle.startWave(Progress.tutorialEnemies(), { timeLimit: 0 });
+    this.registerSeen();
+    this.battle.addLog('【はじめての戦い】訓練場の魔物が現れた！', 'floor');
+    AL.Events.emit('wave', { floor: 1, wave: 0, boss: false, tutorial: true });
+  };
+  RP.finishTutorial = function () {
+    var r = AL.Guide.battleReward(this.state);
+    this.mode = 'tower';
+    this.battle.healAllies(true);
+    this.battle.addLog('【はじめての戦い】勝利！ 無限の深淵塔へ向かいます', 'floor');
+    this.transition = C.BATTLE.WAVE_TRANSITION;
+    AL.Events.emit('tutorialEnd', r);
+    return r;
+  };
+
   RP.startDungeon = function (id, tier) {
     var st = this.state, d = Progress.dungeon(id);
     if (!d || d.type === 'tower') return { ok: false, msg: '挑戦できません' };
     if (this.mode === 'dungeon') return { ok: false, msg: '他のダンジョンに挑戦中です' };
+    if (this.mode === 'tutorial') return { ok: false, msg: 'はじめての戦いを終えると挑戦できます' };
     if (!Progress.dungeonUnlocked(st, d)) return { ok: false, msg: '解放条件：' + Progress.unlockText(d) };
     var rec = st.dungeons[id];
     tier = Math.max(1, Math.floor(tier || 1));
@@ -3264,6 +3365,102 @@ label.toggle:last-child { border-bottom: none; }
   RP.abandonDungeon = function () {
     if (this.mode !== 'dungeon' || !this.run) return null;
     return this.finishDungeon(false, 'abandon');
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>/* js/core/guide.js */
+/* ABYSSAL LEGENDS - はじめての冒険（新規プレイヤー向けの導入と、機能の段階的な解放）
+ * 進行状況は state.guide に保存する。初回の報酬（召喚・戦闘）は rewards のフラグで一度だけ付与する。
+ * 既存のセーブ（guide 項目なし）は legacy として導入を終えた扱いになり、すべての機能が使える。 */
+(function (G) {
+  'use strict';
+  var AL = G.AL = G.AL || {};
+  var C = AL.CONFIG, D = AL.DATA, U = AL.U;
+  var Guide = AL.Guide = {};
+  var STEPS = C.GUIDE.STEPS;
+
+  Guide.stepIndex = function (step) { return STEPS.indexOf(step); };
+  Guide.reached = function (state, step) { return Guide.stepIndex(state.guide.step) >= Guide.stepIndex(step); };
+  // まだ「NEW GAME」を押していない（タイトル画面で新規開始を選ぶ）状態
+  Guide.isNewGame = function (state) { return !state.guide.legacy && state.guide.step === 'title'; };
+  Guide.inTutorial = function (state) { return !state.guide.legacy && state.guide.step !== 'done'; };
+  // 段階は先へ進むだけ（戻らない）
+  Guide.setStep = function (state, step) {
+    if (Guide.stepIndex(step) > Guide.stepIndex(state.guide.step)) { state.guide.step = step; AL.Events.emit('guide', { step: step }); return true; }
+    return false;
+  };
+
+  // ---- 機能の解放 ----
+  Guide.feature = function (id) { return C.GUIDE.FEATURES.filter(function (f) { return f.id === id; })[0] || null; };
+  Guide.unlocked = function (state, id) {
+    var f = Guide.feature(id);
+    if (!f || state.guide.legacy) return true;                 // 解放条件のない機能・既存プレイヤーは常に使える
+    if (!Guide.reached(state, f.step)) return false;
+    if (f.floor && state.stats.maxFloorEver < f.floor && !(f.orRebirth && state.rebirth.count > 0)) return false;
+    return true;
+  };
+  // 解放されたが、まだ案内していない機能
+  Guide.pendingUnlocks = function (state) {
+    return C.GUIDE.FEATURES.filter(function (f) { return !state.guide.seen[f.id] && Guide.unlocked(state, f.id); }).map(function (f) { return f.id; });
+  };
+  Guide.markSeen = function (state, ids) { ids.forEach(function (id) { if (Guide.feature(id)) state.guide.seen[id] = true; }); };
+
+  // ---- 導入の各段階 ----
+  Guide.begin = function (state) { return Guide.setStep(state, 'summon'); };
+
+  // 初回召喚：結果は固定（C.GUIDE.FIRST_HERO）。魂晶は使わず、天井カウントも変えない。受け取り済みなら何もしない。
+  Guide.firstSummon = function (state, now) {
+    if (state.guide.rewards.summon) return { ok: false, already: true };
+    if (!Guide.reached(state, 'summon')) return { ok: false, msg: 'まだ召喚できません' };
+    var id = C.GUIDE.FIRST_HERO, hd = D.HEROES[id];
+    var add = AL.Heroes.add(state, id);
+    state.gacha.history.unshift({ t: now || Date.now(), id: id, rarity: hd.rarity, banner: 'はじめての召喚', pity: false });
+    if (state.gacha.history.length > C.GACHA.HISTORY_MAX) state.gacha.history.length = C.GACHA.HISTORY_MAX;
+    state.gacha.total += 1;
+    state.stats.gachaPulls += 1;
+    state.guide.rewards.summon = true;
+    Guide.setStep(state, 'battle');
+    return { ok: true, results: [{ id: id, rarity: hd.rarity, pity: false, isNew: add.isNew, lb: add.lb, shards: add.shards }] };
+  };
+
+  // 初回戦闘の報酬：受け取り済みなら何もしない
+  Guide.battleReward = function (state) {
+    if (state.guide.rewards.battle) return { ok: false, already: true };
+    var R = C.GUIDE.BATTLE_REWARD;
+    state.currency.gold = U.safe(state.currency.gold + R.gold);
+    state.currency.exp = U.safe(state.currency.exp + R.exp);
+    var it = AL.Inv.generate({ rarity: R.item.rarity, base: R.item.base, ilvl: R.item.ilvl });
+    it.set = null;
+    AL.Inv.add(state, it, { noAutoSell: true });
+    state.guide.rewards.battle = true;
+    Guide.setStep(state, 'heroes');
+    return { ok: true, gold: R.gold, exp: R.exp, item: it };
+  };
+
+  // 画面を開いたときの進行（仲間画面を見たら、次は装備の案内へ）
+  Guide.onScreen = function (state, id) {
+    if (state.guide.step === 'heroes' && id === 'heroes') return Guide.setStep(state, 'equip');
+    return false;
+  };
+  // プレイヤーの行動による進行（装備をつけた → 強化の案内へ、強化した → 導入完了）
+  Guide.update = function (state) {
+    var g = state.guide, changed = false;
+    if (g.step === 'equip' && state.party.some(function (id) {
+      var h = id && state.heroes[id];
+      return h && D.SLOTS.some(function (sl) { return h.equip[sl]; });
+    })) changed = Guide.setStep(state, 'enhance') || changed;
+    if (g.step === 'enhance' && state.stats.enhances > 0) changed = Guide.setStep(state, 'done') || changed;
+    return changed;
+  };
+
+  // 案内を終える（スキップ）：未受取の初回報酬は一度だけ受け取り、すべての段階を終えた扱いにする
+  Guide.skip = function (state, now) {
+    Guide.begin(state);
+    var summon = state.guide.rewards.summon ? null : Guide.firstSummon(state, now);
+    var battle = state.guide.rewards.battle ? null : Guide.battleReward(state);
+    Guide.setStep(state, 'done');
+    return { ok: true, summon: summon, battle: battle };
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -3659,6 +3856,19 @@ label.toggle:last-child { border-bottom: none; }
       AL.Events.on('loadout', function () { if (Game.runner) Game.runner.rebuildAllies(true); });
     }
     return Game;
+  };
+
+  // 案内をスキップする：未受取の初回報酬は一度だけ受け取り、はじめての戦いの途中なら塔の戦闘に戻る
+  Game.skipGuide = function (now) {
+    var r = AL.Guide.skip(Game.state, now);
+    if (Game.runner.mode === 'tutorial') { Game.runner.mode = 'tower'; Game.runner.battle.status = 'idle'; Game.runner.transition = 0.3; }
+    Game.save();
+    return r;
+  };
+
+  // 導入の段階に合わせて戦闘を切り替える（はじめての戦いの途中で中断・再読み込みした場合も、ここから再開する）
+  Game.resumeGuide = function () {
+    if (Game.state.guide.step === 'battle' && Game.runner.mode === 'tower') Game.runner.startTutorial();
   };
 
   // 復帰時の経過時間チェック → 放置報酬を保留
@@ -4671,6 +4881,13 @@ label.toggle:last-child { border-bottom: none; }
 
   UI.show = function (id, opts) {
     if (!UI.screens[id]) id = 'battle';
+    // 解放前の機能は開かない（はじめての冒険の進行・到達階層で解放）
+    if (!AL.Guide.unlocked(UI.st(), id)) {
+      UI.toast(UI.lockText(id), 'bad');
+      if (UI.current && UI.screens[UI.current] && AL.Guide.unlocked(UI.st(), UI.current)) return;
+      id = 'battle';
+    }
+    if (AL.Guide.onScreen(UI.st(), id) && UI.guideRefresh) UI.guideRefresh();
     var wrap = UI.$('#screen-wrap');
     if (UI.current && wrap) UI.scroll[UI.current] = G.scrollY;
     UI.current = id;
@@ -4710,7 +4927,7 @@ label.toggle:last-child { border-bottom: none; }
     var html = '';
     UI.order.forEach(function (id) {
       var s = UI.screens[id];
-      if (!s.nav) return;
+      if (!s.nav || !AL.Guide.unlocked(UI.st(), id)) return;
       var cls = 'nav-item' + (UI.current === id || (id === 'menu' && UI.screens[UI.current].nav === 'more') ? ' active' : '') + (s.nav === 'more' ? ' more-only' : '') + (id === 'menu' ? ' menu-btn' : '');
       html += '<button class="' + cls + '" data-act="nav" data-id="' + id + '"><span class="ni">' + s.icon + '</span><span>' + s.name + '</span><span class="badge" id="badge-' + id + '"></span></button>';
     });
@@ -4719,12 +4936,12 @@ label.toggle:last-child { border-bottom: none; }
   };
   UI.updateBadges = function () {
     var st = UI.st(); if (!st) return;
-    var ach = AL.Achievements.claimable(st).length;
+    var ach = AL.Guide.unlocked(st, 'achievements') ? AL.Achievements.claimable(st).length : 0;
     var set = function (id, v) { var b = UI.$('#badge-' + id); if (b) b.textContent = v ? String(v) : ''; };
     set('achievements', ach);
     set('battle', AL.Game.pendingIdle ? '!' : '');
     set('menu', ach || '');
-    set('dungeon', st.currency.tickets >= AL.CONFIG.TICKETS.MAX && st.stats.maxFloorEver >= 15 ? '!' : '');
+    set('dungeon', st.currency.tickets >= AL.CONFIG.TICKETS.MAX && st.stats.maxFloorEver >= 15 && AL.Guide.unlocked(st, 'dungeon') ? '!' : '');
   };
 
   // ---- 通貨表示 ----
@@ -4907,18 +5124,20 @@ label.toggle:last-child { border-bottom: none; }
     // 階層表示
     var fl = R.currentFloor(), biome = AL.Progress.biome(fl);
     var hf = UI.$('#hud-floor');
-    var ftxt = inD ? esc(AL.Progress.dungeon(R.run.id).name) + '<small>難易度' + R.run.tier + '</small>' : '第' + t.floor + '層<small>' + (AL.Progress.isBossFloor(t.floor) ? 'ボス階層' : '') + '</small>';
+    var inT = R.mode === 'tutorial';
+    var ftxt = inT ? 'はじめての戦い<small></small>' : inD ? esc(AL.Progress.dungeon(R.run.id).name) + '<small>難易度' + R.run.tier + '</small>' : '第' + t.floor + '層<small>' + (AL.Progress.isBossFloor(t.floor) ? 'ボス階層' : '') + '</small>';
     if (hf._v !== ftxt) { hf.innerHTML = ftxt; hf._v = ftxt; }
     var wv = UI.$('#hud-waves'), wh = '';
     if (inD) {
       var r = R.run, total = r.type === 'bossrush' ? 0 : r.totalWaves + (r.boss ? 1 : 0);
       for (var i = 0; i < total; i++) wh += '<i class="' + (i < r.wave ? 'done' : (i === r.wave ? 'cur' : '')) + (r.boss && i === total - 1 ? ' boss' : '') + '"></i>';
       if (r.type === 'bossrush') wh = '<span class="tiny gold">撃破 ' + r.bossCount + '体</span>';
-    } else if (AL.Progress.isBossFloor(t.floor)) wh = '<i class="boss cur"></i>';
+    } else if (inT) wh = '';
+    else if (AL.Progress.isBossFloor(t.floor)) wh = '<i class="boss cur"></i>';
     else for (var j = 0; j < C.TOWER.WAVES_PER_FLOOR; j++) wh += '<i class="' + (j < t.wave ? 'done' : (j === t.wave ? 'cur' : '')) + '"></i>';
     if (wv._v !== wh) { wv.innerHTML = wh; wv._v = wh; }
     var nb = AL.Progress.nextBossIn(t.floor);
-    UI.$('#hud-boss-text').textContent = inD ? 'ダンジョン挑戦中' : (nb === 0 ? 'ボス戦！' : '次のボスまで ' + nb + '層');
+    UI.$('#hud-boss-text').textContent = inT ? '訓練場' : inD ? 'ダンジョン挑戦中' : (nb === 0 ? 'ボス戦！' : '次のボスまで ' + nb + '層');
     UI.$('#hud-biome').textContent = biome.name;
     var prog = inD ? 1 : (nb === 0 ? 1 : (C.TOWER.BOSS_INTERVAL - nb + t.wave / C.TOWER.WAVES_PER_FLOOR) / C.TOWER.BOSS_INTERVAL);
     UI.$('#hud-boss-bar').style.width = (prog * 100).toFixed(1) + '%';
@@ -5183,10 +5402,11 @@ label.toggle:last-child { border-bottom: none; }
       (h.lb >= C.HERO.MAX_LB ? '<div class="small good">限界突破は最大です</div>' :
         '<button class="btn" data-act="heroLb" data-id="' + id + '"' + (st.currency.shards >= lbCost ? '' : ' disabled') + '>欠片' + lbCost + '個で限界突破</button>') + '</div>' +
       '<div class="panel"><div class="row between"><h3 style="margin:0">装備</h3><button class="btn sm" data-act="autoEquipHero" data-id="' + id + '">最適装備</button></div><div class="slots mt">' + slotHtml + '</div></div>' +
-      '<div class="panel"><h3>編成</h3><div class="btn-group">' + [0, 1, 2, 3, 4].map(function (i) {
+      // 編成の変更は、編成が解放されてから（はじめての冒険の途中は表示しない）
+      (!AL.Guide.unlocked(st, 'party') ? '' : '<div class="panel"><h3>編成</h3><div class="btn-group">' + [0, 1, 2, 3, 4].map(function (i) {
         var cur = st.party[i];
         return '<button class="btn sm' + (cur === id ? ' primary' : '') + '" data-act="heroToSlot" data-id="' + id + '" data-slot="' + i + '">' + (i < C.HERO.FRONT_SLOTS ? '前衛' : '後衛') + (i + 1) + (cur && cur !== id ? '<span class="cost">(' + esc(U.shortName(D.HEROES[cur].name)) + ')</span>' : '') + '</button>';
-      }).join('') + (inParty ? '<button class="btn sm danger" data-act="heroOut" data-id="' + id + '">外す</button>' : '') + '</div></div>';
+      }).join('') + (inParty ? '<button class="btn sm danger" data-act="heroOut" data-id="' + id + '">外す</button>' : '') + '</div></div>');
   }
   UI.heroDetail = function (id) {
     if (!UI.st().heroes[id]) { UI.codexHero(id); return; }
@@ -5551,7 +5771,7 @@ label.toggle:last-child { border-bottom: none; }
   });
 
   // ===== 召喚演出 =====
-  UI.gachaAnim = function (results) {
+  UI.gachaAnim = function (results, onClose) {
     var best = Math.max.apply(null, results.map(function (r) { return r.rarity; }));
     var col = best === 5 ? '#ffcc4d' : (best === 4 ? '#c58bff' : '#6aa8ff');
     var ov = document.createElement('div');
@@ -5594,7 +5814,7 @@ label.toggle:last-child { border-bottom: none; }
       }).join('') + '</div><button class="btn primary mt" data-close style="min-width:200px">OK</button>';
       var cards = ov.querySelectorAll('.gres');
       Array.prototype.forEach.call(cards, function (c, i) { setTimeout(function () { c.classList.add('show'); }, 90 * i + 50); });
-      ov.querySelector('[data-close]').addEventListener('click', function () { ov.remove(); });
+      ov.querySelector('[data-close]').addEventListener('click', function () { ov.remove(); if (onClose) onClose(); });
     }
     ov.addEventListener('click', function (e) { if (!done) { e.stopPropagation(); showResults(); } });
     raf = requestAnimationFrame(draw);
@@ -5618,6 +5838,7 @@ label.toggle:last-child { border-bottom: none; }
       var tiles = ['dungeon', 'rebirth', 'codex', 'achievements', 'shop', 'settings'];
       el.innerHTML = '<div class="screen-title">メニュー</div><div class="menu-grid">' + tiles.map(function (id) {
         var s = UI.screens[id];
+        if (!AL.Guide.unlocked(UI.st(), id)) return '<button class="menu-tile locked" disabled><span class="ni">🔒</span>' + s.name + '<span class="lock">' + esc(UI.lockText(id)) + '</span></button>';
         return '<button class="menu-tile" data-act="nav" data-id="' + id + '"><span class="ni">' + s.icon + '</span>' + s.name + '<span class="badge" id="badge-m-' + id + '"></span></button>';
       }).join('') + '</div>' +
       '<div class="panel mt"><div class="small sub">ABYSSAL LEGENDS v' + C.GAME_VERSION + '</div><div class="tiny dim">セーブデータはこの端末のブラウザ内に保存されます。機種変更やブラウザのデータ削除に備えて、設定画面からバックアップを書き出してください。</div></div>';
@@ -5982,6 +6203,192 @@ label.toggle:last-child { border-bottom: none; }
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
+<script>/* js/ui/guide.js */
+/* ABYSSAL LEGENDS - はじめての冒険の画面（タイトル・初回召喚・はじめての戦い・育成の案内・機能の解放） */
+(function (G) {
+  'use strict';
+  var AL = G.AL, UI = AL.UI, C = AL.CONFIG, D = AL.DATA, U = AL.U, esc = U.esc;
+  var Guide = AL.Guide;
+
+  // 機能が解放されたときの短い説明（heroes・equip は案内バーで説明する）
+  var INTRO = {
+    gacha: '魂晶を使って、新しい仲間を召喚できます。',
+    party: '戦う5人と並び順（前衛・後衛）を入れ替えられます。',
+    achievements: '目標を達成すると、魂晶などの報酬を受け取れます。',
+    codex: '出会った仲間・敵・装備を確認できます。',
+    shop: 'ゴールドで強化石・魂晶・挑戦券などと交換できます。',
+    dungeon: '挑戦券を使って特別な戦いに挑み、強化石や装備をたくさん手に入れます。',
+    rebirth: '塔をやり直す代わりに転生ポイントを得て、永続的な強化を買えます。'
+  };
+  // 育成の案内（一度に1つずつ、その機能を使う場面で表示する）
+  var HINTS = {
+    summon: { text: '仲間を召喚して、冒険を始めましょう。', btn: '召喚する', act: 'guideSummon' },
+    battle: { text: '仲間は自動で戦います。訓練場の魔物をすべて倒しましょう。' },
+    heroes: { text: '【育成】仲間画面が解放されました。仲間は経験値で自動でレベルアップします。仲間を選ぶと能力やスキルを確認できます。', btn: '仲間画面へ', act: 'nav', id: 'heroes' },
+    equip: { text: '【装備】手に入れた武器を装備しましょう。装備画面の「編成全員を最適装備」で、強い装備を自動でつけられます。', btn: '装備画面へ', act: 'nav', id: 'equip' },
+    enhance: { text: '【強化】装備を選んで「強化」すると、強化石とゴールドで強くなります。1回強化してみましょう。', btn: '装備画面へ', act: 'nav', id: 'equip' }
+  };
+
+  UI.lockText = function (id) {
+    var f = Guide.feature(id);
+    if (!f) return '';
+    if (!Guide.reached(UI.st(), f.step)) return 'はじめての冒険を進めると解放されます';
+    return '第' + f.floor + '層に到達すると解放されます';
+  };
+
+  // ---- タイトル画面 ----
+  UI.showTitle = function () {
+    var st = UI.st(), isNew = Guide.isNewGame(st);
+    var old = document.getElementById('title-screen'); if (old) old.remove();
+    AL.Game.paused = true;
+    UI.titleOpen = true;
+    var el = document.createElement('div');
+    el.id = 'title-screen';
+    el.innerHTML = '<div class="t-logo">ABYSSAL<br>LEGENDS</div><div class="t-sub">INFINITE ABYSS</div>' +
+      '<div class="t-btns"><button class="btn primary" data-title="new"' + (isNew ? '' : ' disabled') + '>NEW GAME</button>' +
+      '<button class="btn" data-title="continue"' + (isNew ? ' disabled' : '') + '>CONTINUE</button></div>' +
+      '<div class="t-note tiny sub">' + (isNew ? '深淵の塔の頂を目指す、放置型の冒険が始まります。'
+        : 'この端末のセーブデータから続きを遊べます。最初からやり直すときは、設定画面の「データの初期化」を使ってください。') + '</div>' +
+      '<div class="tiny dim">v' + C.GAME_VERSION + '</div>';
+    el.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-title]');
+      if (!b || b.disabled) return;
+      if (b.dataset.title === 'new') { Guide.begin(UI.st()); AL.Game.save(); }
+      UI.startGame();
+    });
+    document.body.appendChild(el);
+  };
+  UI.startGame = function () {
+    var el = document.getElementById('title-screen'); if (el) el.remove();
+    UI.titleOpen = false;
+    AL.Game.paused = false;
+    AL.Game.lastReal = Date.now();
+    UI.renderNav();
+    if (!AL.Guide.unlocked(UI.st(), UI.current)) UI.show('battle');
+    if (AL.Game.loadWarnings.length) {
+      UI.modal({ title: 'お知らせ', html: '<ul class="small">' + AL.Game.loadWarnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>' });
+      AL.Game.loadWarnings = [];
+    }
+    if (AL.Game.pendingIdle) UI.showIdle();
+    UI.guideFlow();
+  };
+
+  // ---- 導入の段階ごとの画面 ----
+  UI.guideFlow = function () {
+    var st = UI.st();
+    if (st.guide.step === 'summon') UI.showSummonIntro();
+    else if (st.guide.step === 'battle') { AL.Game.resumeGuide(); UI.show('battle'); UI.showBattleIntro(); }
+    UI.guideRefresh();
+  };
+
+  UI.showSummonIntro = function () {
+    if (UI.topModal('guideSummon')) return;
+    AL.Game.paused = true;            // 召喚するまで塔の戦闘を進めない（はじめての戦いから始めるため）
+    UI.modal({
+      id: 'guideSummon', title: 'はじめての召喚', persistent: true,
+      html: '<div class="small">深淵の塔に挑む冒険者たち。まずは、ともに戦う仲間を呼びましょう。</div>' +
+        '<div class="notice info mt small">はじめての召喚は無料です。<b>★4の仲間が必ず1人</b>加わり、そのまま編成に入ります。</div>',
+      buttons: [{ label: 'スキップ', cls: 'ghost', onClick: function () { UI.confirmSkipGuide(); } },
+        { label: '仲間を召喚する', cls: 'primary', onClick: function () { UI.doFirstSummon(); } }]
+    });
+  };
+  UI.doFirstSummon = function () {
+    UI.closeModal('guideSummon');
+    var r = Guide.firstSummon(UI.st(), Date.now());
+    if (!r.ok) { UI.guideFlow(); return; }
+    AL.Game.save();
+    UI.renderCurrency();
+    UI.gachaAnim(r.results, function () { UI.guideFlow(); });
+  };
+
+  UI.showBattleIntro = function () {
+    if (UI.topModal('guideBattle')) return;
+    var st = UI.st();
+    AL.Game.paused = true;
+    UI.modal({
+      id: 'guideBattle', title: 'はじめての戦い',
+      html: (st.heroes[C.GUIDE.FIRST_HERO] ? '<div class="small good">' + esc(D.HEROES[C.GUIDE.FIRST_HERO].name) + 'が仲間になり、5人で戦います。</div>' : '') +
+        '<ul class="small guide-list">' +
+        '<li>仲間は<b>自動で戦います</b>。上の画面で戦いの様子、下の「戦闘中の敵」で敵の残りHPを確認できます。</li>' +
+        '<li>仲間のカードの<b class="good">緑のバーがHP</b>、<b style="color:#4ab0ff">青のバーがスキル</b>です。青がたまると、スキルを自動で使います。</li>' +
+        '<li>「×2」などのボタンで、戦いの速さを変えられます。</li></ul>',
+      buttons: [{ label: '戦闘開始', cls: 'primary' }],
+      onClose: function () { AL.Game.paused = false; AL.Game.lastReal = Date.now(); }
+    });
+  };
+
+  UI.showTutorialEnd = function (r) {
+    if (!r || !r.ok) return;
+    AL.Game.save();
+    UI.renderCurrency(); UI.renderNav();
+    UI.modal({
+      id: 'guideWin', title: '勝利！',
+      html: '<div class="small">はじめての戦いに勝利しました。倒した敵からは、ゴールドや経験値、装備が手に入ります。</div>' +
+        '<div class="reward-list mt"><div>ゴールド<b>+' + U.fmt(r.gold) + '</b></div><div>経験値<b>+' + U.fmt(r.exp) + '</b></div>' +
+        '<div>装備<b>' + esc(AL.Inv.name(r.item)) + '</b></div></div>' +
+        '<div class="small mt">ここからは無限の深淵塔を自動で登っていきます。仲間を育てて、より深い階層を目指しましょう。</div>',
+      buttons: [{ label: '仲間画面へ', cls: 'primary', onClick: function () { UI.show('heroes'); } }]
+    });
+  };
+
+  UI.confirmSkipGuide = function () {
+    UI.confirm({ title: '案内をスキップ', ok: 'スキップする',
+      html: '<div class="small">はじめての冒険の案内を終了します。初回の召喚と、はじめての戦いの報酬は受け取れます。ほかの機能は、これまでどおり進行に合わせて解放されます。</div>',
+      onOk: function () {
+        UI.closeModal('guideSummon'); UI.closeModal('guideBattle');
+        AL.Game.paused = false;
+        var r = AL.Game.skipGuide(Date.now());
+        UI.renderCurrency(); UI.renderNav();
+        if (r.summon && r.summon.ok) UI.gachaAnim(r.summon.results, function () { UI.guideRefresh(); });
+        UI.guideRefresh();
+      } });
+  };
+
+  // ---- 案内バーと機能の解放 ----
+  UI.guideRefresh = function () {
+    var st = UI.st(); if (!st) return;
+    var bar = document.getElementById('guide-bar');
+    if (!bar) { bar = document.createElement('div'); bar.id = 'guide-bar'; document.body.appendChild(bar); }
+    var h = !st.guide.legacy && HINTS[st.guide.step];
+    if (!h || UI.titleOpen) { document.body.classList.remove('has-guide'); bar._v = ''; return; }
+    var html = '<div>' + esc(h.text) + '</div><div class="g-row">' +
+      (h.btn ? '<button class="btn sm primary" data-act="' + h.act + '"' + (h.id ? ' data-id="' + h.id + '"' : '') + '>' + h.btn + '</button>' : '') +
+      '<button class="g-skip" data-act="guideSkip">案内を終える</button></div>';
+    if (bar._v !== html) { bar.innerHTML = html; bar._v = html; }
+    document.body.classList.add('has-guide');
+  };
+  UI.guideTick = function () {
+    var st = UI.st(); if (!st || UI.titleOpen) return;
+    if (Guide.update(st)) { UI.renderNav(); UI.guideRefresh(); }
+    var pend = Guide.pendingUnlocks(st);
+    if (!pend.length) return;
+    // 説明のない機能（仲間・装備は案内バーで説明）は、表示せずに案内済みにする
+    Guide.markSeen(st, pend.filter(function (id) { return !INTRO[id]; }));
+    var show = pend.filter(function (id) { return INTRO[id]; });
+    if (!show.length || UI.modals.length || document.querySelector('.gacha-overlay')) return;
+    Guide.markSeen(st, show);
+    UI.renderNav();
+    UI.modal({ id: 'guideUnlock', title: '新しい機能が解放されました',
+      html: show.map(function (id) { var sc = UI.screens[id]; return '<div class="syn on"><b>' + sc.icon + '　' + esc(sc.name) + '</b><div class="small">' + esc(INTRO[id]) + '</div></div>'; }).join('') +
+        (show.length > 1 || UI.screens[show[0]].nav === 'more' ? '<div class="tiny sub mt">「その他」メニューから開けます。</div>' : ''),
+      buttons: [{ label: 'OK', cls: 'primary' }] });
+    AL.Game.save();
+  };
+  UI.afterStateReplaced = function () {
+    var st = UI.st();
+    UI.closeModal('guideSummon'); UI.closeModal('guideBattle');
+    if (Guide.isNewGame(st)) { UI.showTitle(); UI.guideRefresh(); return; }
+    AL.Game.resumeGuide();
+    UI.renderNav();
+    if (!Guide.unlocked(st, UI.current)) UI.show('battle');
+    UI.guideRefresh();
+  };
+
+  UI.action('guideSummon', function () { if (UI.st().guide.step === 'summon') UI.showSummonIntro(); });
+  UI.action('guideSkip', function () { UI.confirmSkipGuide(); });
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
 <script>/* js/main.js */
 /* ABYSSAL LEGENDS - 起動処理とメインループ */
 (function (G) {
@@ -5995,7 +6402,7 @@ label.toggle:last-child { border-bottom: none; }
       AL.Game.frame(now);
       AL.Scene.render();
       if (now - lastTick > 120) { lastTick = now; UI.tickBattle(); }
-      if (now - lastSlow > 500) { lastSlow = now; UI.renderCurrency(); UI.updateBadges(); }
+      if (now - lastSlow > 500) { lastSlow = now; UI.renderCurrency(); UI.updateBadges(); UI.guideTick(); }
       errCount = 0;
     } catch (e) {
       errCount++;
@@ -6007,6 +6414,7 @@ label.toggle:last-child { border-bottom: none; }
 
   function boot() {
     AL.Game.init();
+    AL.Game.paused = true;            // タイトル画面で「NEW GAME／CONTINUE」を選ぶまで戦闘を進めない
     UI.lastSaved = Date.now();
     UI.buildBattlePanel();
     document.addEventListener('click', UI.handleClick);
@@ -6016,7 +6424,7 @@ label.toggle:last-child { border-bottom: none; }
     UI.renderCurrency();
 
     // ゲームイベント → 画面
-    AL.Events.on('idlePending', function () { setTimeout(UI.showIdle, 50); });
+    AL.Events.on('idlePending', function () { setTimeout(function () { if (!UI.titleOpen) UI.showIdle(); }, 50); });
     AL.Events.on('dungeonEnd', function (res) {
       // バトル・ダンジョン画面で見ていたときだけ、次の挑戦を選べるようダンジョン画面へ戻す
       if (UI.current === 'battle' || UI.current === 'dungeon') UI.show('dungeon');
@@ -6038,17 +6446,18 @@ label.toggle:last-child { border-bottom: none; }
     // 保存のタイミング
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) AL.Game.save();
-      else { AL.Game.frame(Date.now()); if (AL.Game.pendingIdle) UI.showIdle(); }
+      else { AL.Game.frame(Date.now()); if (AL.Game.pendingIdle && !UI.titleOpen) UI.showIdle(); }
     });
     G.addEventListener('pagehide', function () { AL.Game.save(); });
     G.addEventListener('beforeunload', function () { AL.Game.save(); });
     // 非表示中（requestAnimationFrame停止中）も時間を進める
     setInterval(function () { if (document.hidden) { try { AL.Game.frame(Date.now()); } catch (e) { console.error(e); } } }, 1000);
 
-    if (AL.Game.loadWarnings.length) {
-      UI.modal({ title: 'お知らせ', html: '<ul class="small">' + AL.Game.loadWarnings.map(function (w) { return '<li>' + U.esc(w) + '</li>'; }).join('') + '</ul>' });
-    }
-    if (AL.Game.pendingIdle) UI.showIdle();
+    AL.Events.on('tutorialEnd', function (r) { UI.showTutorialEnd(r); });
+    AL.Events.on('guide', function () { UI.renderNav(); UI.guideRefresh(); });
+    AL.Events.on('stateReplaced', function () { UI.afterStateReplaced(); });
+    // お知らせ・放置報酬は、タイトル画面から始めたあとに表示する（UI.startGame）
+    UI.showTitle();
     var ld = document.getElementById('loading'); if (ld) ld.remove();
     G.requestAnimationFrame(loop);
   }
