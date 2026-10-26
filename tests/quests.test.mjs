@@ -295,7 +295,7 @@ test('デイリーの進捗と受け取り済みは、保存・読み込みで�
 test('実績クエストは一度達成すれば戻らず、日付が変わっても受け取り済みのまま', () => {
   const h = setup();
   const s = fresh(h);
-  s.stats.rebirths = 1;
+  s.stats.rebirths = 2; // a_reb1 は「転生を2回行う」
   assert.equal(h.Q.claim(s, 'ach', 'a_reb1', NOW).ok, true);
   h.Q.refreshDay(s, NOW + 86400000 * 3);
   assert.equal(s.quests.ach.claimed.a_reb1, true);
@@ -305,11 +305,102 @@ test('実績クエストは一度達成すれば戻らず、日付が変わっ�
 test('クエストの受け取りは既存の「実績」と別の記録で、互いに影響しない', () => {
   const h = setup();
   const s = fresh(h);
-  s.stats.rebirths = 1;
+  s.stats.rebirths = 2; // a_reb1 は「転生を2回行う」
   const c0 = s.currency.crystals;
   assert.equal(h.Q.claim(s, 'ach', 'a_reb1', NOW).ok, true);
   assert.deepEqual(h.plain(s.achievements.claimed), {});
   assert.equal(h.AL.Achievements.claim(s, 'rebirth_1').ok, true);
   assert.deepEqual(h.plain(s.quests.ach.claimed), { a_reb1: true });
   assert.equal(s.currency.crystals, c0 + 300 + 300);
+});
+
+// ===== 実績クエスト a_reb1（転生を2回行う） =====
+
+// 実際の転生処理（AL.Rebirth.perform）で転生する。転生できる階層まで進めた状態にしてから行う
+function rebirthOnce(h, s) {
+  s.tower.maxFloor = h.AL.CONFIG.REBIRTH.MIN_FLOOR;
+  const r = h.AL.Rebirth.perform(s);
+  assert.equal(r.ok, true, r.msg);
+}
+
+test('a_reb1 の名前・達成条件・進捗の目標が「転生を2回行う」で一致している（ID は変えていない）', () => {
+  const h = setup();
+  const f = h.Q.find('ach', 'a_reb1');
+  assert.ok(f, 'a_reb1 が見つかりません');
+  const q = f.q;
+  assert.equal(q.name, '転生を2回行う');
+  assert.equal(q.stat, 'rebirths');
+  assert.equal(q.target, 2);
+  assert.equal(q.reward.crystals, 300);
+  const s = fresh(h);
+  const st = h.Q.status(s, 'ach', q);
+  assert.deepEqual([st.value, st.target, st.done, st.claimed], [0, 2, false, false]);
+});
+
+test('初回の転生では a_reb1 は達成されず、受け取れない（既存の転生回数の記録で数える）', () => {
+  const h = setup();
+  const s = fresh(h);
+  const keys0 = Object.keys(s.stats).sort();
+  rebirthOnce(h, s);
+  assert.equal(s.rebirth.count, 1);
+  assert.equal(s.stats.rebirths, 1);
+  // 記録の項目は増えていない（既存の転生回数の記録を使う）
+  assert.deepEqual(Object.keys(s.stats).sort(), keys0);
+  const st = h.Q.status(s, 'ach', h.Q.find('ach', 'a_reb1').q);
+  assert.deepEqual([st.value, st.target, st.done], [1, 2, false]);
+  const c0 = s.currency.crystals;
+  assert.equal(h.Q.claim(s, 'ach', 'a_reb1', NOW).ok, false);
+  assert.equal(s.currency.crystals, c0);
+  assert.equal(s.quests.ach.claimed.a_reb1, undefined);
+  assert.ok(!h.Q.claimable(s, NOW).some((x) => x.q.id === 'a_reb1'), '初回の転生で受け取れる一覧に入っています');
+  // 初回の転生のクエストは、メインの m13 と既存の実績 rebirth_1 だけになる
+  const m13 = h.Q.status(s, 'main', h.Q.find('main', 'm13').q);
+  assert.equal(m13.done, true);
+});
+
+test('2回目の転生で a_reb1 が達成され、魂晶300をちょうど一度だけ受け取れる（保存・再読み込み後も受け取り済み）', () => {
+  const h = setup();
+  const s = fresh(h);
+  rebirthOnce(h, s);
+  rebirthOnce(h, s);
+  assert.equal(s.stats.rebirths, 2);
+  const st = h.Q.status(s, 'ach', h.Q.find('ach', 'a_reb1').q);
+  assert.deepEqual([st.value, st.target, st.done, st.claimed], [2, 2, true, false]);
+  assert.ok(h.Q.claimable(s, NOW).some((x) => x.q.id === 'a_reb1'));
+  const c0 = s.currency.crystals;
+  const r = h.Q.claim(s, 'ach', 'a_reb1', NOW);
+  assert.equal(r.ok, true);
+  assert.equal(r.reward.crystals, 300);
+  assert.equal(s.currency.crystals, c0 + 300);
+  assert.equal(s.quests.ach.claimed.a_reb1, true);
+  assert.equal(h.Q.claim(s, 'ach', 'a_reb1', NOW).ok, false);
+  assert.equal(s.currency.crystals, c0 + 300);
+  const again = reload(h, s);
+  assert.equal(again.quests.ach.claimed.a_reb1, true);
+  assert.equal(h.Q.status(again, 'ach', h.Q.find('ach', 'a_reb1').q).claimed, true);
+  assert.equal(h.Q.claim(again, 'ach', 'a_reb1', NOW).ok, false);
+  assert.equal(again.currency.crystals, c0 + 300);
+  // まとめて受け取りでも二重に受け取らない
+  const c1 = again.currency.crystals;
+  const all = h.Q.claimAll(again, 'ach', NOW);
+  assert.deepEqual([all.count, all.crystals], [0, 0]);
+  assert.equal(again.currency.crystals, c1);
+  assert.equal(again.quests.ach.claimed.a_reb1, true);
+});
+
+test('a_reb1 を受け取り済みのセーブ（転生1回）は、受け取り済みのまま読み込まれ、魂晶は変わらない', () => {
+  // 条件を変える前の版で受け取った記録が残っていても、もう一度受け取れることはなく、受け取り済みの記録も消えない
+  const h = setup();
+  const s = fresh(h);
+  rebirthOnce(h, s);
+  s.quests.ach.claimed.a_reb1 = true;
+  const c0 = s.currency.crystals;
+  const again = reload(h, s);
+  assert.equal(again.quests.ach.claimed.a_reb1, true);
+  const st = h.Q.status(again, 'ach', h.Q.find('ach', 'a_reb1').q);
+  assert.deepEqual([st.done, st.claimed], [false, true]);
+  assert.equal(h.Q.claim(again, 'ach', 'a_reb1', NOW).ok, false);
+  rebirthOnce(h, again);
+  assert.equal(h.Q.claim(again, 'ach', 'a_reb1', NOW).ok, false);
+  assert.equal(again.currency.crystals, c0);
 });

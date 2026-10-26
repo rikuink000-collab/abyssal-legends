@@ -547,7 +547,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.2.0',
+    GAME_VERSION: '1.2.1',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -1415,7 +1415,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       Q('a_lv40', '仲間をLv40にする', 'maxHeroLv', 40, 150),
       Q('a_lv60', '仲間をLv60にする（限界突破が必要）', 'maxHeroLv', 60, 225),
       Q('a_lv90', '仲間をLv90にする（限界突破が必要）', 'maxHeroLv', 90, 300),
-      Q('a_reb1', '初めて転生する', 'rebirths', 1, 300),
+      Q('a_reb1', '転生を2回行う', 'rebirths', 2, 300),
       Q('a_reb5', '転生を5回行う', 'rebirths', 5, 450)
     ]
   };
@@ -6422,46 +6422,98 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var Q = AL.Quests, ui = UI.ui;
   var TABS = [['main', 'メイン'], ['daily', 'デイリー'], ['ach', '実績']];
 
-  // 1件分の表示。状態は「未達成」「達成（受取可）」「受取済み」「未解放（メインの先のクエスト）」の4つ
-  function row(kind, q, s) {
-    var p = Math.min(1, s.target ? s.value / s.target : 0);
-    var label = s.claimed ? ['got', '受取済み'] : s.locked ? ['todo', '未解放'] : s.done ? ['ready', '達成'] : ['todo', '未達成'];
-    var act = s.claimed ? '' : '<button class="btn sm gold q-act" data-act="questClaim" data-kind="' + kind + '" data-id="' + q.id + '"' + (s.done && !s.locked ? '' : ' disabled') + '>受取</button>';
-    return '<div class="ach quest' + (s.done && !s.claimed && !s.locked ? ' done' : '') + (s.claimed ? ' claimed' : '') + (s.locked ? ' locked' : '') + '" data-quest="' + q.id + '">' +
-      '<div class="grow"><div class="row"><b class="grow">' + esc(q.name) + '</b><span class="q-state ' + label[0] + '">' + label[1] + '</span></div>' +
-      '<div class="tiny sub">報酬：魂晶 ' + q.reward.crystals + '</div>' +
-      '<div class="bar mt"><i style="width:' + (p * 100).toFixed(1) + '%"></i></div><div class="tiny dim num q-prog">' + U.fmt(Math.min(s.value, s.target)) + '/' + U.fmt(s.target) + '</div></div>' + act + '</div>';
+  // 1件分の表示内容。状態は「未達成」「達成（受取可）」「受取済み」「未解放（メインの先のクエスト）」の4つ
+  function view(s) {
+    return {
+      width: (Math.min(1, s.target ? s.value / s.target : 0) * 100).toFixed(1) + '%',
+      prog: U.fmt(Math.min(s.value, s.target)) + '/' + U.fmt(s.target),
+      label: s.claimed ? ['got', '受取済み'] : s.locked ? ['todo', '未解放'] : s.done ? ['ready', '達成'] : ['todo', '未達成'],
+      ready: s.done && !s.claimed && !s.locked
+    };
   }
+  function row(kind, q, s) {
+    var v = view(s);
+    var act = s.claimed ? '' : '<button class="btn sm gold q-act" data-act="questClaim" data-kind="' + kind + '" data-id="' + q.id + '"' + (v.ready ? '' : ' disabled') + '>受取</button>';
+    return '<div class="ach quest' + (v.ready ? ' done' : '') + (s.claimed ? ' claimed' : '') + (s.locked ? ' locked' : '') + '" data-quest="' + q.id + '">' +
+      '<div class="grow"><div class="row"><b class="grow">' + esc(q.name) + '</b><span class="q-state ' + v.label[0] + '">' + v.label[1] + '</span></div>' +
+      '<div class="tiny sub">報酬：魂晶 ' + q.reward.crystals + '</div>' +
+      '<div class="bar mt"><i style="width:' + v.width + '"></i></div><div class="tiny dim num q-prog">' + v.prog + '</div></div>' + act + '</div>';
+  }
+  // タブに表示するクエスト（表示順）
+  function items(tab) {
+    if (tab === 'main') return D.QUESTS.main.map(function (q) { return { kind: 'main', q: q }; });
+    if (tab === 'daily') return D.QUESTS.daily.map(function (q) { return { kind: 'daily', q: q }; }).concat([{ kind: 'dailyBonus', q: D.QUESTS.dailyBonus }]);
+    return D.QUESTS.ach.map(function (q) { return { kind: 'ach', q: q }; });
+  }
+  function counts(st) {
+    var c = { main: 0, daily: 0, ach: 0 };
+    Q.claimable(st).forEach(function (x) { c[x.kind === 'dailyBonus' ? 'daily' : x.kind]++; });
+    return c;
+  }
+  function tabText(t, n) { return t[1] + (n ? '（' + n + '）' : ''); }
+  function claimAllText(n) { return 'まとめて受け取る（' + n + '件）'; }
 
   UI.register({
     id: 'quests', name: 'クエスト', icon: '任', nav: 'more',
     render: function (el) {
       var st = UI.st();
       Q.refreshDay(st, Date.now());
-      var tab = ui.questTab || 'main';
-      var claimable = Q.claimable(st).filter(function (x) { return x.kind === tab || (tab === 'daily' && x.kind === 'dailyBonus'); }).length;
+      var tab = ui.questTab || 'main', c = counts(st);
       var html = '<div class="screen-title">クエスト</div><div class="tabs">' + TABS.map(function (t) {
-        var n = Q.claimable(st).filter(function (x) { return x.kind === t[0] || (t[0] === 'daily' && x.kind === 'dailyBonus'); }).length;
-        return '<button class="' + (t[0] === tab ? 'on' : '') + '" data-act="questTab" data-id="' + t[0] + '">' + t[1] + (n ? '（' + n + '）' : '') + '</button>';
+        return '<button class="' + (t[0] === tab ? 'on' : '') + '" data-act="questTab" data-id="' + t[0] + '">' + tabText(t, c[t[0]]) + '</button>';
       }).join('') + '</div>';
-      if (claimable) html += '<button class="btn gold block mb" data-act="questClaimAll" data-kind="' + tab + '">まとめて受け取る（' + claimable + '件）</button>';
+      // まとめて受け取るボタンは常に置き、受け取れるものがないときは隠す（戦闘中の更新でボタンを作り直さないため）
+      html += '<button class="btn gold block mb q-all" data-act="questClaimAll" data-kind="' + tab + '"' + (c[tab] ? '' : ' style="display:none"') + '>' + claimAllText(c[tab]) + '</button>';
       if (tab === 'main') {
         var cur = Q.mainCurrent(st), done = D.QUESTS.main.filter(function (q) { return st.quests.main.claimed[q.id]; }).length;
         html += '<div class="tiny sub mb">順番に進むクエストです。報酬を受け取ると次のクエストが始まります。（' + done + '/' + D.QUESTS.main.length + '）</div>' +
-          (cur ? '' : '<div class="notice info">メインクエストをすべて達成しました。</div>') +
-          D.QUESTS.main.map(function (q) { return row('main', q, Q.status(st, 'main', q)); }).join('');
+          (cur ? '' : '<div class="notice info">メインクエストをすべて達成しました。</div>');
       } else if (tab === 'daily') {
-        html += '<div class="tiny sub mb">毎日0時（この端末の時刻）に進捗と受け取りが戻ります。今日の開始時点からの記録で数えます。</div>' +
-          D.QUESTS.daily.map(function (q) { return row('daily', q, Q.status(st, 'daily', q)); }).join('') +
-          row('dailyBonus', D.QUESTS.dailyBonus, Q.status(st, 'dailyBonus', D.QUESTS.dailyBonus));
+        html += '<div class="tiny sub mb">毎日0時（この端末の時刻）に進捗と受け取りが戻ります。今日の開始時点からの記録で数えます。</div>';
       } else {
-        html += '<div class="tiny sub mb">一度達成すると戻らない長期の目標です。（「実績」画面の実績とは別の報酬です）</div>' +
-          D.QUESTS.ach.map(function (q) { return row('ach', q, Q.status(st, 'ach', q)); }).join('');
+        html += '<div class="tiny sub mb">一度達成すると戻らない長期の目標です。（「実績」画面の実績とは別の報酬です）</div>';
       }
+      html += items(tab).map(function (x) { return row(x.kind, x.q, Q.status(st, x.kind, x.q)); }).join('');
       el.innerHTML = html;
     }
   });
-  UI.listen(['floor', 'kill', 'loadout', 'rebirth', 'dungeonEnd', 'questClaim', 'stateReplaced'], ['quests']);
+  // 討伐・階層・育成による進捗は UI.questScreenTick で数値とバーだけを更新する（画面全体は作り直さない）
+  UI.listen(['rebirth', 'questClaim', 'stateReplaced'], ['quests']);
+
+  // クエスト画面を開いているあいだ、進捗の数値・バー・状態の表示だけを書き換える。
+  // ボタンなどの要素は作り直さない。受取済みの状態が変わったとき（日付の切り替え）だけ画面を作り直す。
+  UI.questScreenTick = function () {
+    var el = UI.$('#screen'), st = UI.st();
+    if (UI.current !== 'quests' || !el || !st || UI.dirty) return;
+    Q.refreshDay(st, Date.now());
+    var tab = ui.questTab || 'main', list = items(tab), rows = el.querySelectorAll('.quest[data-quest]'), stats = [];
+    if (rows.length !== list.length) return UI.render();
+    for (var i = 0; i < list.length; i++) {
+      var s = Q.status(st, list[i].kind, list[i].q);
+      if (rows[i].dataset.quest !== list[i].q.id || !!s.claimed !== rows[i].classList.contains('claimed')) return UI.render();
+      stats.push(s);
+    }
+    stats.forEach(function (s, i) {
+      var r = rows[i], v = view(s), bar = r.querySelector('.bar i'), prog = r.querySelector('.q-prog'), lab = r.querySelector('.q-state'), btn = r.querySelector('.q-act');
+      if (bar && parseFloat(bar.style.width) !== parseFloat(v.width)) bar.style.width = v.width;
+      if (prog && prog.textContent !== v.prog) prog.textContent = v.prog;
+      if (lab && lab.textContent !== v.label[1]) { lab.className = 'q-state ' + v.label[0]; lab.textContent = v.label[1]; }
+      r.classList.toggle('done', v.ready);
+      r.classList.toggle('locked', !!s.locked);
+      if (btn && btn.disabled !== !v.ready) btn.disabled = !v.ready;
+    });
+    var c = counts(st);
+    el.querySelectorAll('.tabs [data-act="questTab"]').forEach(function (b) {
+      var t = TABS.filter(function (x) { return x[0] === b.dataset.id; })[0], txt = t && tabText(t, c[t[0]]);
+      if (t && b.textContent !== txt) b.textContent = txt;
+    });
+    var all = el.querySelector('.q-all');
+    if (all) {
+      var disp = c[tab] ? '' : 'none', txt = claimAllText(c[tab]);
+      if (all.style.display !== disp) all.style.display = disp;
+      if (all.textContent !== txt) all.textContent = txt;
+    }
+  };
 
   UI.action('questTab', function (el) { ui.questTab = el.dataset.id; UI.render(); });
   UI.action('questClaim', function (el) {
@@ -6477,20 +6529,25 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     UI.render(); UI.renderCurrency(); UI.updateBadges(); UI.questTick(true);
   });
 
-  // バトル画面の上部に、次に進めるメインクエストを表示する
+  // バトル画面の上部に、次に進めるメインクエストを表示する。
+  // 進捗が変わっただけなら数値だけを書き換え、ボタンは作り直さない。
   UI.questTick = function (force) {
     var box = UI.$('#bs-quest'), st = UI.st();
     if (!box || !st) return;
     var cur = AL.Guide.unlocked(st, 'quests') ? Q.mainCurrent(st) : null;
-    var html = '';
-    if (cur) {
-      var s = Q.status(st, 'main', cur);
-      html = '<div class="panel quest-next"><div class="row between"><div class="grow"><div class="tiny sub">次の目標（メインクエスト）</div><div class="q-name">' + esc(cur.name) + '</div>' +
-        '<div class="tiny num q-prog">' + U.fmt(Math.min(s.value, s.target)) + '/' + U.fmt(s.target) + '　報酬：魂晶 ' + cur.reward.crystals + '</div></div>' +
+    var s = cur && Q.status(st, 'main', cur);
+    var key = cur ? cur.id + (s.done ? ':done' : ':todo') : '';
+    var prog = cur ? U.fmt(Math.min(s.value, s.target)) + '/' + U.fmt(s.target) + '　報酬：魂晶 ' + cur.reward.crystals : '';
+    if (force || box._k !== key) {
+      box.innerHTML = cur ? '<div class="panel quest-next"><div class="row between"><div class="grow"><div class="tiny sub">次の目標（メインクエスト）</div><div class="q-name">' + esc(cur.name) + '</div>' +
+        '<div class="tiny num q-prog">' + prog + '</div></div>' +
         (s.done ? '<button class="btn sm gold" data-act="questClaim" data-kind="main" data-id="' + cur.id + '">受取</button>'
-          : '<button class="btn sm" data-act="nav" data-id="quests">クエスト</button>') + '</div></div>';
+          : '<button class="btn sm" data-act="nav" data-id="quests">クエスト</button>') + '</div></div>' : '';
+      box._k = key;
+      return;
     }
-    if (force || box._v !== html) { box.innerHTML = html; box._v = html; }
+    var p = box.querySelector('.q-prog');
+    if (p && p.textContent !== prog) p.textContent = prog;
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -6700,7 +6757,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       AL.Game.frame(now);
       AL.Scene.render();
       if (now - lastTick > 120) { lastTick = now; UI.tickBattle(); }
-      if (now - lastSlow > 500) { lastSlow = now; UI.renderCurrency(); UI.updateBadges(); UI.guideTick(); UI.questTick(); }
+      if (now - lastSlow > 500) { lastSlow = now; UI.renderCurrency(); UI.updateBadges(); UI.guideTick(); UI.questTick(); UI.questScreenTick(); }
       errCount = 0;
     } catch (e) {
       errCount++;

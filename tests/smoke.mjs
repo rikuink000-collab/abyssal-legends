@@ -839,6 +839,100 @@ test('クエスト画面（スマホ幅）：3つのタブ・進捗「x/y」・�
   }
 });
 
+test('戦闘中にクエスト画面を開いていても、画面全体を作り直さず、受取ボタンなどの要素は同じまま進捗だけが更新される（スマホ幅）', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await startAsVeteran(page);
+    await page.evaluate(() => {
+      AL.UI.closeModal();
+      const st = AL.Game.state;
+      st.settings.speed = Math.max(...AL.CONFIG.BATTLE.SPEEDS);
+      // バトル画面の「次の目標」を討伐数のクエスト（m02：敵を50体倒す）にする
+      st.quests.main.claimed.m01 = true;
+      AL.UI.show('battle'); AL.UI.questTick(true);
+    });
+    // バトル画面の「次の目標」：討伐で進捗が変わっても、ボタンは作り直さない
+    const killsOf = () => page.evaluate(() => AL.Game.state.stats.kills);
+    const waitKills = async (n) => { const k0 = await killsOf(); await page.waitForFunction((k) => AL.Game.state.stats.kills >= k, k0 + n, { timeout: 20000 }); };
+    await page.evaluate(() => { window.__bannerBtn = document.querySelector('#bs-quest button'); });
+    const bannerProg0 = await page.textContent('#bs-quest .q-prog');
+    await waitKills(2);
+    await page.waitForTimeout(700);
+    const banner = await page.evaluate(() => ({ same: document.querySelector('#bs-quest button') === window.__bannerBtn && window.__bannerBtn.isConnected,
+      prog: document.querySelector('#bs-quest .q-prog').textContent }));
+    assert.equal(banner.same, true, 'バトル画面の「次の目標」のボタンが作り直されました');
+    assert.notEqual(banner.prog, bannerProg0, 'バトル画面の「次の目標」の進捗が更新されていません');
+
+    // クエスト画面（デイリー）を開き、討伐数のクエストをあと1体で達成する状態にする
+    await page.evaluate(() => {
+      AL.UI.show('quests');
+      AL.UI.ui.questTab = 'daily'; AL.UI.render();
+      const st = AL.Game.state;
+      st.quests.daily.base.kills = st.stats.kills - 99;
+      // 画面の描画回数を数え、今ある要素に印を付ける
+      const def = AL.UI.screens.quests, orig = def.render;
+      window.__renders = 0;
+      def.render = function (el) { window.__renders++; return orig.call(this, el); };
+      window.__marked = Array.from(document.querySelectorAll('#screen button, #screen .quest'));
+    });
+    const before = await page.evaluate(() => ({
+      d: document.querySelector('.quest[data-quest="d_kills"] .q-state').textContent,
+      btn: document.querySelector('.quest[data-quest="d_kills"] .q-act').disabled,
+      all: getComputedStyle(document.querySelector('.q-all')).display
+    }));
+    assert.equal(before.d, '未達成');
+    assert.equal(before.btn, true);
+    const progOf = () => page.$$eval('#screen .quest .q-prog', (ps) => ps.map((p) => p.textContent));
+    const prog0 = await progOf();
+    await waitKills(3);
+    await page.waitForTimeout(700);
+    const after = await page.evaluate(() => {
+      const now = Array.from(document.querySelectorAll('#screen button, #screen .quest'));
+      const row = document.querySelector('.quest[data-quest="d_kills"]');
+      return {
+        renders: window.__renders, current: AL.UI.current,
+        same: now.length === window.__marked.length && now.every((el, i) => el === window.__marked[i]) && window.__marked.every((el) => el.isConnected),
+        d: row.querySelector('.q-state').textContent, btn: row.querySelector('.q-act').disabled,
+        bar: parseFloat(row.querySelector('.bar i').style.width), prog: row.querySelector('.q-prog').textContent,
+        all: getComputedStyle(document.querySelector('.q-all')).display, allText: document.querySelector('.q-all').textContent,
+        tab: document.querySelector('[data-act="questTab"][data-id="daily"]').textContent
+      };
+    });
+    assert.equal(after.current, 'quests');
+    assert.equal(after.renders, 0, `戦闘中にクエスト画面全体が ${after.renders} 回作り直されました`);
+    assert.equal(after.same, true, '戦闘中に受取ボタンなどの要素が作り直されました');
+    assert.notDeepEqual(await progOf(), prog0, '進捗の数値が更新されていません');
+    // あと1体だったクエストは、同じボタンのまま「達成」になり、押せるようになる
+    assert.deepEqual([after.d, after.btn, after.bar, after.prog], ['達成', false, 100, '100/100']);
+    assert.notEqual(after.all, 'none', 'まとめて受け取るボタンが表示されていません');
+    assert.match(after.allText, /まとめて受け取る（\d+件）/);
+    assert.match(after.tab, /デイリー（\d+）/);
+    const layout = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, w: innerWidth }));
+    assert.ok(layout.sw <= layout.w, '画面が横にはみ出しています');
+    await page.screenshot({ path: `${SHOTS}/phone-quests-battle-update.png` });
+
+    // 印を付けたボタンをそのまま押して受け取れる（魂晶はちょうど30増え、二度は受け取れない）
+    const c0 = await page.evaluate(() => AL.Game.state.currency.crystals);
+    await page.evaluate(() => { window.__claimBtn = document.querySelector('.quest[data-quest="d_kills"] .q-act'); });
+    await page.click('.quest[data-quest="d_kills"] .q-act');
+    const claimed = await page.evaluate(() => ({ marked: window.__marked.includes(window.__claimBtn), crystals: AL.Game.state.currency.crystals,
+      flag: AL.Game.state.quests.daily.claimed.d_kills === true, again: AL.Quests.claim(AL.Game.state, 'daily', 'd_kills', Date.now()).ok,
+      state: document.querySelector('.quest[data-quest="d_kills"] .q-state').textContent }));
+    assert.deepEqual(claimed, { marked: true, crystals: c0 + 30, flag: true, again: false, state: '受取済み' });
+
+    // 320px 幅でも横にはみ出さない
+    await page.setViewportSize({ width: 320, height: 640 });
+    await page.waitForTimeout(300);
+    const narrow = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, w: innerWidth }));
+    assert.ok(narrow.sw <= narrow.w, '320px 幅で画面が横にはみ出しています');
+    await page.screenshot({ path: `${SHOTS}/phone-quests-320.png` });
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
 test('クエストは新規プレイヤーの導入中は使えず、導入を終えると解放される', async () => {
   const { context, page, errors } = await openPhone();
   try {
