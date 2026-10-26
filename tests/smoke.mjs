@@ -709,12 +709,12 @@ test('セーブを読み込めなかったとき：始める前にタイトル�
     await page.screenshot({ path: `${SHOTS}/phone-title-load-failed.png` });
     const keys = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.includes('_corrupt_')).map((k) => localStorage.getItem(k)));
     assert.deepEqual(keys, [BROKEN], '元データが退避されていません');
-    // NEW GAME を押しても、退避した元データはそのまま残る（これまでどおりお知らせも表示される）
+    // NEW GAME を押しても、退避した元データはそのまま残る。タイトル画面で表示したお知らせは、開始後に繰り返さない
     await page.click('[data-title="new"]');
     const after = await page.evaluate(() => ({ step: AL.Game.state.guide.step, modals: AL.UI.modals.map((m) => m.opts.title),
       corrupt: Object.keys(localStorage).filter((k) => k.includes('_corrupt_')).map((k) => localStorage.getItem(k)) }));
     assert.equal(after.step, 'summon');
-    assert.ok(after.modals.includes('お知らせ'));
+    assert.ok(!after.modals.includes('お知らせ'), 'タイトル画面と同じお知らせが、開始後にもう一度表示されました');
     assert.deepEqual(after.corrupt, [BROKEN]);
 
     // 2) 本体が壊れていて、バックアップ（合成フィクスチャ）から復元 → CONTINUE で続きから。お知らせも表示
@@ -724,8 +724,21 @@ test('セーブを読み込めなかったとき：始める前にタイトル�
     assert.deepEqual(await titleButtons(page), { new: false, continue: true });
     assert.match(await titleNotice(page) || '', /バックアップから復元しました/);
     await page.click('[data-title="continue"]');
-    const g = await page.evaluate(() => ({ legacy: AL.Game.state.guide.legacy, step: AL.Game.state.guide.step, title: !!document.getElementById('title-screen') }));
-    assert.deepEqual(g, { legacy: true, step: 'done', title: false });
+    const g = await page.evaluate(() => ({ legacy: AL.Game.state.guide.legacy, step: AL.Game.state.guide.step, title: !!document.getElementById('title-screen'),
+      notice: AL.UI.modals.some((m) => m.opts.title === 'お知らせ') }));
+    assert.deepEqual(g, { legacy: true, step: 'done', title: false, notice: false }, '開始後の状態が違うか、お知らせが2回表示されました');
+
+    // 3) タイトル画面を表示したあとに加わったお知らせ（例：タイトル画面で待つ間に端末の時刻が戻った）は、開始後に1回だけ表示する
+    await page.goto(`${baseURL}/__blank`);
+    await page.evaluate(([k, b]) => { localStorage.clear(); localStorage.setItem(k, b); }, [SAVE_KEY, BROKEN]);
+    await boot(page);
+    const late = '（テスト用）タイトル画面の表示後に加わったお知らせ';
+    await page.evaluate((w) => { AL.Game.loadWarnings.push(w); }, late);
+    await page.click('[data-title="new"]');
+    const shown = await page.evaluate(() => AL.UI.modals.filter((m) => m.opts.title === 'お知らせ').map((m) => m.el.querySelector('.modal-body').innerText));
+    assert.equal(shown.length, 1, '開始後のお知らせが表示されていません');
+    assert.ok(shown[0].includes(late), '後から加わったお知らせが表示されていません');
+    assert.ok(!/読み込めなかったため新しく開始しました/.test(shown[0]), 'タイトル画面で表示済みのお知らせが繰り返されました');
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
