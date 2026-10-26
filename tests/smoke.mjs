@@ -580,7 +580,9 @@ test('新規プレイヤー：タイトル → 初回召喚 → はじめての�
     await page.evaluate(() => AL.UI.closeModal());
     g = await guideInfo(page);
     assert.equal(g.bar, '', '導入の完了後も案内バーが出ています');
-    for (const id of ['heroes', 'party', 'equip', 'gacha']) assert.ok(g.nav.includes(id), `${id} が解放されていません`);
+    for (const id of ['heroes', 'quests', 'equip', 'gacha']) assert.ok(g.nav.includes(id), `${id} が解放されていません`);
+    const partyTab = await page.evaluate(() => { AL.UI.show('heroes'); const b = document.querySelector('.hero-tabs [data-id="party"]'); return b && !b.disabled; });
+    assert.ok(partyTab, '導入の完了後に、仲間タブから編成を開けません');
     const partyBtns2 = await page.evaluate(() => { AL.UI.heroDetail('h24'); const n = document.querySelectorAll('#modal-root [data-act="heroToSlot"]').length; AL.UI.closeModal(); return n; });
     assert.equal(partyBtns2, 5, '編成の解放後に、仲間の詳細から編成を変更できません');
 
@@ -677,7 +679,9 @@ test('既存セーブ（合成フィクスチャ）：CONTINUE で続きから�
     assert.equal(g.mode, 'tower');
     assert.equal(g.bar, '');
     assert.deepEqual(g.modals.filter((m) => m.startsWith('guide')), [], '既存プレイヤーに導入が表示されました');
-    for (const id of ['battle', 'heroes', 'party', 'equip', 'gacha', 'menu']) assert.ok(g.nav.includes(id), `${id} が使えません`);
+    assert.deepEqual(g.nav.filter((id) => ['battle', 'heroes', 'quests', 'equip', 'gacha', 'menu'].includes(id)), ['battle', 'heroes', 'quests', 'equip', 'gacha', 'menu'], '下部のタブが使えません');
+    const partyOk = await page.evaluate(() => { AL.UI.show('heroes'); const b = document.querySelector('.hero-tabs [data-id="party"]'); return b && !b.disabled; });
+    assert.ok(partyOk, '既存プレイヤーが仲間タブから編成を開けません');
     const tiles = await page.evaluate(() => { AL.UI.show('menu'); return document.querySelectorAll('.menu-tile.locked').length; });
     assert.equal(tiles, 0, '既存プレイヤーに鍵付きの機能があります');
     const after = await page.evaluate(() => JSON.stringify({ h: AL.Game.state.heroes, p: AL.Game.state.party, c: AL.Game.state.currency.crystals, i: AL.Game.state.items.length }));
@@ -947,6 +951,106 @@ test('クエストは新規プレイヤーの導入中は使えず、導入を�
     assert.match(await page.textContent('#bs-quest'), /第5層に到達する/);
     await page.evaluate(() => AL.UI.show('quests'));
     assert.equal(await page.evaluate(() => AL.UI.current), 'quests');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+// ===== 下部ナビ（仲間・編成の統合、クエストのタブ） =====
+
+test('下部ナビ（スマホ幅）：バトル・仲間・クエスト・装備・ガチャ・その他の6つで、仲間タブの中で一覧と編成を切り替えられる', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    // タブの大きさは、導入を終えた状態（下部ナビの6つがすべて使える）で、320px・390px の画面幅で確かめる
+    await boot(page);
+    await startAsVeteran(page);
+    await page.evaluate(() => { AL.UI.closeModal(); AL.Game.paused = true; });
+    const navOf = () => page.$$eval('#nav .nav-item', (bs) => bs.filter((b) => getComputedStyle(b).display !== 'none').map((b) => ({ id: b.dataset.id, label: b.innerText.replace(/\s+/g, ''), on: b.classList.contains('active') })));
+    for (const width of [320, 390]) {
+      await page.setViewportSize({ width, height: 664 });
+      await page.evaluate(() => AL.UI.show('battle'));
+      await page.waitForTimeout(200);
+      assert.equal(await page.evaluate(() => innerWidth), width, `前提：画面幅が ${width}px になっていません`);
+      const nav = await navOf();
+      assert.deepEqual(nav.map((n) => n.id), ['battle', 'heroes', 'quests', 'equip', 'gacha', 'menu'], `${width}px：下部のタブの並びが違います`);
+      for (const [i, name] of ['バトル', '仲間', 'クエスト', '装備', 'ガチャ', 'その他'].entries()) assert.ok(nav[i].label.includes(name), `${width}px：${name} の文字がありません（${nav[i].label}）`);
+      // 6つのタブが画面内に並び、押しやすい大きさ（幅44px・高さ44px以上）で、文字が欠けない
+      const box = await page.$$eval('#nav .nav-item', (bs) => bs.filter((b) => getComputedStyle(b).display !== 'none').map((b) => {
+        const r = b.getBoundingClientRect(), t = b.querySelector('span:nth-child(2)'); return { l: r.left, r: r.right, w: r.width, h: r.height, clip: t.scrollWidth > t.clientWidth + 1 || t.getBoundingClientRect().right > r.right + 0.5 }; }));
+      assert.ok(box.every((b) => b.l >= -0.5 && b.r <= width + 0.5), `${width}px：タブが画面からはみ出しています`);
+      assert.ok(box.every((b) => b.w >= 44 && b.h >= 44), `${width}px：タブが小さすぎます ${JSON.stringify(box.map((b) => [Math.round(b.w), Math.round(b.h)]))}`);
+      assert.ok(box.every((b) => !b.clip), `${width}px：タブの文字が欠けています`);
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}px：横にはみ出しています`);
+      await page.screenshot({ path: `${SHOTS}/phone-nav-${width}.png` });
+    }
+    await page.setViewportSize({ width: 390, height: 664 });
+
+    // ここからは既存プレイヤー（合成フィクスチャ：仲間が多く、受け取れるクエストがある）で操作を確かめる
+    await seedSave(page, FIXTURES[0].text);
+    await boot(page);
+    await page.click('[data-title="continue"]');
+    await page.evaluate(() => { AL.UI.closeModal(); AL.Game.paused = true; });
+
+    // 仲間タブ → 一覧。切り替えボタンで編成へ（下部では仲間タブが選択されたまま）
+    await page.click('#nav [data-id="heroes"]');
+    assert.equal(await page.evaluate(() => AL.UI.current), 'heroes');
+    assert.ok(await page.isVisible('.hero-tabs [data-id="heroes"].on'));
+    assert.ok((await page.$$('.grid-cards .hero-card, .grid-cards [data-act="heroDetail"]')).length > 0 || (await page.textContent('#screen')).includes('人'), '仲間一覧が表示されていません');
+    await page.screenshot({ path: `${SHOTS}/phone-heroes-list.png` });
+    await page.click('.hero-tabs [data-id="party"]');
+    let s = await page.evaluate(() => ({ cur: AL.UI.current, title: document.querySelector('#screen .screen-title').textContent, slots: document.querySelectorAll('.pslot').length,
+      navOn: [...document.querySelectorAll('#nav .nav-item.active')].map((b) => b.dataset.id), tabOn: document.querySelector('.hero-tabs .on').dataset.id }));
+    assert.deepEqual({ cur: s.cur, slots: s.slots, navOn: s.navOn, tabOn: s.tabOn }, { cur: 'party', slots: 5, navOn: ['heroes'], tabOn: 'party' });
+    assert.match(s.title, /パーティー編成/);
+    await page.screenshot({ path: `${SHOTS}/phone-heroes-party.png` });
+
+    // 編成の機能（枠を選んで仲間を入れ替え）がそのまま使え、保存・再読み込み後も残る
+    const before = await page.evaluate(() => AL.Game.state.party.slice());
+    const target = await page.evaluate(() => Object.keys(AL.Game.state.heroes).find((id) => !AL.Game.state.party.includes(id)));
+    assert.ok(target, '前提：編成に入っていない仲間がいません');
+    await page.click('.pslot[data-slot="0"]');
+    await page.click(`#screen [data-act="partyPick"][data-id="${target}"]`);
+    const after = await page.evaluate(() => AL.Game.state.party.slice());
+    assert.equal(after[0], target, '編成を変更できません');
+    assert.deepEqual(after.slice(1), before.slice(1));
+    await page.evaluate(() => AL.Game.save());
+    await page.reload();
+    await page.waitForFunction(() => !document.getElementById('loading') && window.AL && AL.Game && AL.Game.state);
+    await page.click('[data-title="continue"]');
+    assert.deepEqual(await page.evaluate(() => AL.Game.state.party.slice()), after, '再読み込み後に編成が戻りました');
+    await page.evaluate(() => AL.UI.closeModal());
+
+    // クエストタブから直接開け、その他メニューからも開ける
+    await page.click('#nav [data-id="quests"]');
+    assert.equal(await page.evaluate(() => AL.UI.current), 'quests');
+    assert.deepEqual(await page.$$eval('[data-act="questTab"]', (bs) => bs.map((b) => b.dataset.id)), ['main', 'daily', 'ach']);
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#nav .nav-item.active')].map((b) => b.dataset.id)), ['quests']);
+    const badge = await page.evaluate(() => ({ q: document.getElementById('badge-quests').textContent, n: AL.Quests.claimable(AL.Game.state).length }));
+    assert.equal(badge.q, String(badge.n || ''), 'クエストのタブに受け取れる件数が出ていません');
+    await page.evaluate(() => AL.UI.show('menu'));
+    assert.ok(await page.isVisible('.menu-tile[data-id="quests"]'), 'その他メニューからクエストを開けません');
+    await page.click('.menu-tile[data-id="quests"]');
+    assert.equal(await page.evaluate(() => AL.UI.current), 'quests');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('導入中は仲間タブの「編成」が鍵付きで、押しても開かない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await page.click('[data-title="new"]');
+    // 案内を「仲間」の段階まで進めた状態（編成・クエストは未解放）
+    const r = await page.evaluate(() => { AL.UI.closeModal(); const st = AL.Game.state; st.guide.step = 'heroes'; AL.UI.renderNav(); AL.UI.show('heroes');
+      const b = document.querySelector('.hero-tabs [data-id="party"]');
+      return { nav: [...document.querySelectorAll('#nav .nav-item')].map((x) => x.dataset.id), disabled: b.disabled, text: b.textContent }; });
+    assert.ok(r.nav.includes('heroes') && !r.nav.includes('quests'), JSON.stringify(r.nav));
+    assert.equal(r.disabled, true, '導入中に編成が押せます');
+    assert.match(r.text, /🔒/);
+    assert.equal(await page.evaluate(() => { AL.UI.show('party'); return AL.UI.current; }), 'heroes', '導入中に編成が開きました');
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
