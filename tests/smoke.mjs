@@ -496,6 +496,7 @@ function assertNoDuplicateReward(before, after) {
   assert.equal(after.items, before.items + after.sessionItems, `装備が戦闘のドロップ以外で増えました（${before.items} → ${after.items}、ドロップ ${after.sessionItems}）`);
   assert.ok(Math.abs(after.gold - (before.gold + after.sessionGold)) < 1e-6, `ゴールドが戦闘の報酬以外で増えました（${before.gold} → ${after.gold}、撃破報酬 ${after.sessionGold}）`);
 }
+const titleNotice = (page) => page.evaluate(() => { const n = document.querySelector('#title-screen .t-warn'); return n ? n.innerText : null; });
 const titleButtons = (page) => page.$$eval('#title-screen [data-title]', (bs) => Object.fromEntries(bs.map((b) => [b.dataset.title, !b.disabled])));
 async function reloadToTitle(page) {
   await page.evaluate(() => AL.Game.save());
@@ -509,6 +510,7 @@ test('新規プレイヤー：タイトル → 初回召喚 → はじめての�
     await boot(page);
     // タイトル画面：新規は NEW GAME だけ押せる。戦闘は止まっている
     assert.deepEqual(await titleButtons(page), { new: true, continue: false });
+    assert.equal(await titleNotice(page), null, '正常な起動でお知らせが表示されています');
     let g = await guideInfo(page);
     assert.equal(g.paused, true);
     assert.deepEqual(g.nav, ['battle', 'menu', 'settings'], '導入前から使える機能が多すぎます');
@@ -665,6 +667,7 @@ test('既存セーブ（合成フィクスチャ）：CONTINUE で続きから�
     await seedSave(page, FIXTURES[0].text);
     await boot(page);
     assert.deepEqual(await titleButtons(page), { new: false, continue: true });
+    assert.equal(await titleNotice(page), null, '正常な既存セーブでお知らせが表示されています');
     const before = await page.evaluate(() => JSON.stringify({ h: AL.Game.state.heroes, p: AL.Game.state.party, c: AL.Game.state.currency.crystals, i: AL.Game.state.items.length }));
     await page.screenshot({ path: `${SHOTS}/phone-guide-title-continue.png` });
     await page.click('[data-title="continue"]');
@@ -679,6 +682,50 @@ test('既存セーブ（合成フィクスチャ）：CONTINUE で続きから�
     assert.equal(tiles, 0, '既存プレイヤーに鍵付きの機能があります');
     const after = await page.evaluate(() => JSON.stringify({ h: AL.Game.state.heroes, p: AL.Game.state.party, c: AL.Game.state.currency.crystals, i: AL.Game.state.items.length }));
     assert.equal(after, before, '既存プレイヤーの仲間・編成・魂晶・装備が変わりました');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('セーブを読み込めなかったとき：始める前にタイトル画面でお知らせを表示し、元データは退避されたまま', async () => {
+  const BROKEN = '{"broken-synthetic-save';
+  const { context, page, errors } = await openPhone();
+  try {
+    // 1) 本体が壊れていてバックアップもない → 新規開始。タイトル画面のボタンの下にお知らせ
+    await seedSave(page, BROKEN);
+    await boot(page);
+    assert.deepEqual(await titleButtons(page), { new: true, continue: false });
+    const note = await titleNotice(page);
+    assert.ok(note, 'タイトル画面にお知らせが表示されていません');
+    assert.match(note, /セーブデータが読み込めなかったため新しく開始しました（元データは別名で退避済み）/);
+    assert.match(note, /JSONとして読み込めません/);
+    const layout = await page.evaluate(() => {
+      const r = (q) => document.querySelector(q).getBoundingClientRect();
+      return { notice: r('#title-screen .t-warn'), btns: r('#title-screen .t-btns'), w: innerWidth, sw: document.documentElement.scrollWidth };
+    });
+    assert.ok(layout.notice.top >= layout.btns.bottom, 'お知らせがボタンの下にありません');
+    assert.ok(layout.notice.left >= 0 && layout.notice.right <= layout.w && layout.sw <= layout.w, 'お知らせが画面からはみ出しています');
+    await page.screenshot({ path: `${SHOTS}/phone-title-load-failed.png` });
+    const keys = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.includes('_corrupt_')).map((k) => localStorage.getItem(k)));
+    assert.deepEqual(keys, [BROKEN], '元データが退避されていません');
+    // NEW GAME を押しても、退避した元データはそのまま残る（これまでどおりお知らせも表示される）
+    await page.click('[data-title="new"]');
+    const after = await page.evaluate(() => ({ step: AL.Game.state.guide.step, modals: AL.UI.modals.map((m) => m.opts.title),
+      corrupt: Object.keys(localStorage).filter((k) => k.includes('_corrupt_')).map((k) => localStorage.getItem(k)) }));
+    assert.equal(after.step, 'summon');
+    assert.ok(after.modals.includes('お知らせ'));
+    assert.deepEqual(after.corrupt, [BROKEN]);
+
+    // 2) 本体が壊れていて、バックアップ（合成フィクスチャ）から復元 → CONTINUE で続きから。お知らせも表示
+    await page.goto(`${baseURL}/__blank`);
+    await page.evaluate(([k, b, v]) => { localStorage.clear(); localStorage.setItem(k, b); localStorage.setItem(k + '_backup', v); }, [SAVE_KEY, BROKEN, FIXTURES[0].text]);
+    await boot(page);
+    assert.deepEqual(await titleButtons(page), { new: false, continue: true });
+    assert.match(await titleNotice(page) || '', /バックアップから復元しました/);
+    await page.click('[data-title="continue"]');
+    const g = await page.evaluate(() => ({ legacy: AL.Game.state.guide.legacy, step: AL.Game.state.guide.step, title: !!document.getElementById('title-screen') }));
+    assert.deepEqual(g, { legacy: true, step: 'done', title: false });
     assert.deepEqual(errors, []);
   } finally {
     await context.close();

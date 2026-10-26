@@ -355,6 +355,8 @@ label.toggle:last-child { border-bottom: none; }
 #title-screen .t-btns { display: flex; flex-direction: column; gap: 10px; width: min(300px, 100%); margin-top: 18px; }
 #title-screen .t-btns .btn { min-height: 52px; font-size: 17px; letter-spacing: 0.08em; }
 #title-screen .t-note { max-width: 320px; }
+#title-screen .t-warn { width: min(340px, 100%); max-height: 30vh; overflow-y: auto; text-align: left; margin: 0; }
+#title-screen .t-warn ul { margin: 4px 0 0; padding-left: 18px; }
 #guide-bar { position: fixed; left: 8px; right: 8px; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 6px); z-index: 25; display: none;
   padding: 8px 10px; border-radius: 12px; background: #1e143c; border: 1px solid #8b6cff; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6); font-size: 12px; line-height: 1.5; }
 body.has-guide #guide-bar { display: block; }
@@ -6247,6 +6249,9 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     el.innerHTML = '<div class="t-logo">ABYSSAL<br>LEGENDS</div><div class="t-sub">INFINITE ABYSS</div>' +
       '<div class="t-btns"><button class="btn primary" data-title="new"' + (isNew ? '' : ' disabled') + '>NEW GAME</button>' +
       '<button class="btn" data-title="continue"' + (isNew ? ' disabled' : '') + '>CONTINUE</button></div>' +
+      // 読み込み時のお知らせ（セーブを読み込めなかった・バックアップから復元した等）は、始める前にここで知らせる
+      (AL.Game.loadWarnings.length ? '<div class="notice t-warn" role="alert"><b>お知らせ</b><ul>' +
+        AL.Game.loadWarnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul></div>' : '') +
       '<div class="t-note tiny sub">' + (isNew ? '深淵の塔の頂を目指す、放置型の冒険が始まります。'
         : 'この端末のセーブデータから続きを遊べます。最初からやり直すときは、設定画面の「データの初期化」を使ってください。') + '</div>' +
       '<div class="tiny dim">v' + C.GAME_VERSION + '</div>';
