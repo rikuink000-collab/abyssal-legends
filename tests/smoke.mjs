@@ -951,6 +951,72 @@ test('クエストは新規プレイヤーの導入中は使えず、導入を�
   }
 });
 
+// ===== 通貨表示 =====
+
+// 上部の通貨表示：すべての通貨がヘッダーの中に見切れずに収まり、横にはみ出さないこと
+const headerLayout = (page) => page.evaluate(() => {
+  const W = innerWidth, h = document.getElementById('header').getBoundingClientRect();
+  const logo = document.querySelector('#header .logo').getBoundingClientRect(), box = document.getElementById('currency');
+  const curs = [...box.querySelectorAll('.cur')].map((e) => ({ t: e.textContent, b: e.getBoundingClientRect(), clip: e.scrollWidth > e.clientWidth + 1 }));
+  const ms = document.getElementById('mini-status'), msr = ms.offsetParent ? ms.getBoundingClientRect() : null;
+  return {
+    sw: document.documentElement.scrollWidth, W, header: h.height, n: curs.length,
+    texts: curs.map((c) => c.t),
+    hidden: curs.filter((c) => c.b.left < logo.right - 0.5 || c.b.right > W + 0.5 || c.b.top < h.top - 0.5 || c.b.bottom > h.bottom + 0.5 || c.clip).map((c) => c.t),
+    boxScrolls: box.scrollWidth > box.clientWidth + 1,
+    miniGap: msr ? Math.round(msr.top - h.bottom) : null
+  };
+});
+
+test('通貨表示（320px・390px）：すべての通貨が見切れずに見え、横にはみ出さない（通貨が増えても隠れない）', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await startAsVeteran(page);
+    await page.evaluate(() => AL.UI.closeModal());
+    const cases = [];
+    for (const full of [false, true]) {
+      if (full) {
+        // 欠片・転生ポイントを持つ進んだプレイヤー（通貨7種・大きな値）
+        await page.evaluate(() => {
+          const st = AL.Game.state, c = st.currency;
+          Object.assign(c, { gold: 1.23e15, crystals: 123456, exp: 9.87e14, stones: 45678, shards: 1234, rebirthPts: 56789 });
+          st.rebirth.count = 3;
+          AL.UI.renderCurrency();
+        });
+      }
+      for (const width of [320, 390]) {
+        await page.setViewportSize({ width, height: 664 });
+        await page.evaluate(() => { AL.UI.show('battle'); AL.UI.renderCurrency(); });
+        await page.waitForTimeout(200);
+        const b = await headerLayout(page);
+        assert.equal(b.n, full ? 7 : 5);
+        assert.ok(b.texts.some((t) => t.startsWith('券')), '挑戦券が表示されていません');
+        assert.deepEqual(b.hidden, [], `${width}px：見切れている通貨があります`);
+        assert.equal(b.boxScrolls, false, `${width}px：通貨表示が横スクロールしないと見えません`);
+        assert.ok(b.sw <= b.W, `${width}px：画面が横にはみ出しています`);
+        // ほかの画面でも、ヘッダーの下の表示（戦闘の概要）がヘッダーに隠れない
+        await page.evaluate(() => AL.UI.show('quests'));
+        await page.waitForTimeout(100);
+        const q = await headerLayout(page);
+        assert.ok(q.miniGap !== null && q.miniGap >= 0, `${width}px：戦闘の概要がヘッダーの下に隠れています（${q.miniGap}）`);
+        assert.ok(q.sw <= q.W, `${width}px：クエスト画面が横にはみ出しています`);
+        cases.push({ width, full, header: b.header });
+        await page.screenshot({ path: `${SHOTS}/phone-header-${width}-${full ? 'full' : 'basic'}.png`, clip: { x: 0, y: 0, width, height: 160 } });
+      }
+    }
+    // 390px では、これまでどおりヘッダーの高さは変わらない（52px）
+    for (const c of cases.filter((c) => c.width === 390)) assert.equal(c.header, 52, `390px のヘッダーの高さが変わりました：${JSON.stringify(c)}`);
+    // 320px から広げると、ヘッダーは元の高さに戻る
+    await page.setViewportSize({ width: 390, height: 664 });
+    await page.waitForTimeout(200);
+    assert.equal(await page.evaluate(() => document.getElementById('header').getBoundingClientRect().height), 52);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
 // ===== リポジトリの安全チェック（ブラウザ不要） =====
 
 // git で管理されているファイル（コミット予定のものを含む）

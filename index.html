@@ -349,8 +349,11 @@ label.toggle:last-child { border-bottom: none; }
   #header .logo { font-size: 11px; line-height: 1.15; letter-spacing: 0.02em; }
   #header .logo .l2 { display: block; }
   #header .logo small { display: none; }
-  #currency { justify-content: flex-start; gap: 4px; }
-  .cur { padding: 2px 6px 2px 3px; font-size: 12px; gap: 3px; }
+  /* 通貨は横スクロールで隠さず、入りきらないときは2段に折り返してすべて見せる（高さは --head-h を JS で合わせる） */
+  #header { height: auto; min-height: 52px; padding-top: 2px; padding-bottom: 2px; }
+  #header .logo { flex: none; }
+  #currency { justify-content: flex-end; align-content: center; flex-wrap: wrap; gap: 3px 4px; overflow: visible; min-width: 0; }
+  .cur { padding: 1px 6px 1px 2px; font-size: 12px; gap: 3px; line-height: 18px; }
   .cur i { width: 16px; height: 16px; font-size: 9px; }
   .party-cards { gap: 3px; }
   .pc { padding: 3px; }
@@ -547,7 +550,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.2.1',
+    GAME_VERSION: '1.2.2',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -5164,7 +5167,18 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     if (el._key === key) return;
     el._key = key;
     el.innerHTML = items.map(function (i) { return '<span class="cur" title="' + i[2] + '"><i class="' + i[0] + '">' + i[1] + '</i>' + i[3] + '</span>'; }).join('');
+    UI.fitHeader();
   };
+  // 狭い画面で通貨が2段になったとき、ヘッダーの下に重なる表示（戦闘の概要・メニュー）の位置をヘッダーの高さに合わせる
+  UI.fitHeader = function () {
+    var h = UI.$('#header'), root = document.documentElement.style;
+    if (!h) return;
+    root.removeProperty('--head-h');
+    var std = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--head-h')) || 52;
+    var px = Math.ceil(h.getBoundingClientRect().height);
+    if (px > std) root.setProperty('--head-h', px + 'px');
+  };
+  G.addEventListener('resize', function () { UI.fitHeader(); });
 
   // ---- 通知 ----
   UI.toast = function (msg, type, ms) {
