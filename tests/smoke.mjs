@@ -760,7 +760,9 @@ test('スキップ：初回召喚の画面から案内を終えると、報酬�
     assert.equal(g.paused, false);
     assert.deepEqual(g.rewards, { summon: true, battle: true });
     assert.equal(g.heroes, 5);
-    assert.equal(g.items, 1);
+    // 戦闘は再開しているため、通常のドロップ（sessionItems）が入ることがある。導入報酬の装備はちょうど1個であること
+    // （items と sessionItems は同じ evaluate で読むので、その間にドロップが入ってずれることはない）
+    assert.equal(g.items, 1 + g.sessionItems, `装備が導入報酬1個と戦闘のドロップ以外で増えました（${g.items}個、ドロップ ${g.sessionItems}個）`);
     assert.equal(g.bar, '');
     assert.deepEqual(errors, []);
   } finally {
