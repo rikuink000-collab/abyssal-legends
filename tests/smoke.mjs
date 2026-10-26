@@ -768,6 +768,95 @@ test('スキップ：初回召喚の画面から案内を終えると、報酬�
   }
 });
 
+// ===== クエスト =====
+
+test('クエスト画面（スマホ幅）：3つのタブ・進捗「x/y」・状態の区別・受け取り・再読み込みしても二重に受け取れない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    // 既存プレイヤー（合成フィクスチャ）：達成済みのクエストを受け取れる
+    await seedSave(page, FIXTURES[0].text);
+    await boot(page);
+    await page.click('[data-title="continue"]');
+    await page.evaluate(() => AL.UI.closeModal());
+    // バトル画面の「次の目標」に、次に進めるメインクエストが表示される
+    const banner = await page.textContent('#bs-quest');
+    assert.match(banner, /次の目標（メインクエスト）/);
+    assert.match(banner, /第5層に到達する/);
+    assert.match(banner, /5\/5/);
+    await page.evaluate(() => AL.UI.show('menu'));
+    assert.ok(await page.isVisible('.menu-tile[data-id="quests"]'), 'その他メニューにクエストがありません');
+    await page.click('.menu-tile[data-id="quests"]');
+    assert.equal(await page.evaluate(() => AL.UI.current), 'quests');
+    const tabs = await page.$$eval('[data-act="questTab"]', (bs) => bs.map((b) => b.dataset.id));
+    assert.deepEqual(tabs, ['main', 'daily', 'ach']);
+    const rows = () => page.$$eval('.quest', (qs) => qs.map((q) => ({ id: q.dataset.quest, state: q.querySelector('.q-state').textContent,
+      prog: q.querySelector('.q-prog').textContent, btn: !!q.querySelector('[data-act="questClaim"]') })));
+    let main = await rows();
+    assert.equal(main.length, 13);
+    assert.deepEqual(main[0], { id: 'm01', state: '達成', prog: '5/5', btn: true });
+    assert.equal(main[1].state, '未解放', '順番より先のメインクエストが受け取れる状態になっています');
+    assert.equal(await page.$eval('.quest[data-quest="m02"] [data-act="questClaim"]', (b) => b.disabled), true, '未解放のクエストの受取ボタンが押せます');
+    for (const r of main) assert.match(r.prog, /^[\d.,KMBT]+\/[\d.,KMBT]+$/, `進捗が「x/y」の形ではありません：${r.prog}`);
+    const layout = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, w: innerWidth }));
+    assert.ok(layout.sw <= layout.w, '画面が横にはみ出しています');
+    await page.screenshot({ path: `${SHOTS}/phone-quests-main.png` });
+
+    // 1件受け取る → 魂晶がちょうど45増え、「受取済み」になり、次のクエストが始まる
+    const c0 = await page.evaluate(() => AL.Game.state.currency.crystals);
+    await page.click('.quest[data-quest="m01"] [data-act="questClaim"]');
+    main = await rows();
+    assert.deepEqual(main[0], { id: 'm01', state: '受取済み', prog: '5/5', btn: false });
+    assert.notEqual(main[1].state, '未解放');
+    assert.equal(await page.evaluate(() => AL.Game.state.currency.crystals), c0 + 45);
+
+    // デイリー・実績タブ
+    await page.click('[data-act="questTab"][data-id="daily"]');
+    const daily = await rows();
+    assert.deepEqual(daily.map((r) => r.id), ['d_kills', 'd_boss', 'd_enh', 'd_level', 'd_all']);
+    assert.match(await page.textContent('#screen'), /毎日0時（この端末の時刻）/);
+    await page.screenshot({ path: `${SHOTS}/phone-quests-daily.png` });
+    await page.click('[data-act="questTab"][data-id="ach"]');
+    const ach = await rows();
+    assert.equal(ach.length, 11);
+    assert.ok(ach.some((r) => r.state === '達成') && ach.some((r) => r.state === '未達成'), '実績クエストの状態が区別されていません');
+    // まとめて受け取る → 再読み込みしても受け取り済みのまま、魂晶は増えない
+    await page.click('[data-act="questClaimAll"]');
+    const c1 = await page.evaluate(() => AL.Game.state.currency.crystals);
+    assert.ok(c1 > c0 + 45);
+    await page.evaluate(() => AL.Game.save());
+    await page.reload();
+    await page.waitForFunction(() => !document.getElementById('loading') && window.AL && AL.Game && AL.Game.state);
+    await page.click('[data-title="continue"]');
+    await page.evaluate(() => { AL.UI.closeModal(); AL.UI.show('quests'); });
+    const after = await page.evaluate(() => ({ crystals: AL.Game.state.currency.crystals, m01: !!AL.Game.state.quests.main.claimed.m01,
+      claimMain: AL.Quests.claim(AL.Game.state, 'main', 'm01', Date.now()).ok }));
+    assert.deepEqual(after, { crystals: c1, m01: true, claimMain: false });
+    await page.click('[data-act="questTab"][data-id="ach"]');
+    assert.ok((await rows()).every((r) => r.state !== '達成'), '再読み込み後に受け取れる実績クエストが残っています');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('クエストは新規プレイヤーの導入中は使えず、導入を終えると解放される', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await page.click('[data-title="new"]');
+    const before = await page.evaluate(() => { AL.UI.show('quests'); return { cur: AL.UI.current, banner: document.getElementById('bs-quest').textContent }; });
+    assert.notEqual(before.cur, 'quests', '導入中にクエスト画面が開きました');
+    assert.equal(before.banner, '');
+    await page.evaluate(() => { AL.UI.closeModal(); AL.Game.skipGuide(Date.now()); AL.UI.show('battle'); AL.UI.questTick(true); });
+    assert.match(await page.textContent('#bs-quest'), /第5層に到達する/);
+    await page.evaluate(() => AL.UI.show('quests'));
+    assert.equal(await page.evaluate(() => AL.UI.current), 'quests');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
 // ===== リポジトリの安全チェック（ブラウザ不要） =====
 
 // git で管理されているファイル（コミット予定のものを含む）

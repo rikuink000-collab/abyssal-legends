@@ -53,6 +53,10 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
 - **導入（はじめての冒険）の進行は `state.guide` に保存する。**（`State.sanitizeGuide`・`AL.Guide`）
   - `guide` 項目のない既存セーブは、導入を終えた既存プレイヤー（`legacy`）として読み込み、導入や初回報酬を出さない。
   - 初回召喚・初回戦闘の報酬は `guide.rewards` のフラグで一度だけ付与する。この挙動を変えるときは `tests/guide.test.mjs` も合わせて確認する。
+- **クエストの受け取り記録は `state.quests` に保存する。**（`State.sanitizeQuests`・`AL.Quests`）
+  - 進捗は既存の記録（`state.stats` など）から計算し、保存するのは受け取り済みの ID とデイリーの開始時点の記録だけ。
+  - 報酬の付与と受け取り済みの記録は同じ処理で行う。クエストの ID は削除・改名しない（受け取り記録が消え、再び受け取れてしまう）。
+  - デイリーはショップと同じ端末の日付（`U.dateKey`）で切り替え、時刻を過去に戻しても戻さない。変えるときは `tests/quests.test.mjs` も確認する。
 
 ## リポジトリと公開のルール
 
@@ -82,6 +86,8 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
 - `tests/guide.test.mjs`：導入の新規開始・途中再開・既存セーブ・初回報酬の重複防止・機能の段階的な解放を確認する。
   画面の流れ（タイトル → 初回召喚 → はじめての戦い → 育成の案内）は `tests/smoke.mjs` で確認する。
   導入と関係のない画面のテストは、`startAsVeteran`（導入を終えた状態で開始）を使う。
+- `tests/quests.test.mjs`：クエストの進捗・魂晶の量・二重受け取りの防止（再読み込みを含む）・日付の変更・既存セーブとの互換性を確認する。
+  クエスト画面の操作は `tests/smoke.mjs` で確認する。
 - `tests/save-recovery.test.mjs`：架空の localStorage（テストごとに新しく作り、書き込み失敗などを仕込める）で、
   読み込み失敗時の復元、退避キーの衝突、退避の失敗と保護状態、バックアップの扱いを確認する。
   `tests/load-core.mjs` が index.html のゲームロジックを Node.js に読み込む（index.html は変更しない）。
