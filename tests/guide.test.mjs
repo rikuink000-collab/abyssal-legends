@@ -258,7 +258,7 @@ test('育成の案内：仲間画面 → 装備 → 強化の順に進み、完�
   assert.equal(h.G.update(s), true);
   assert.equal(s.guide.step, 'done');
   assert.equal(h.G.inTutorial(s), false);
-  for (const id of ['gacha', 'party', 'achievements', 'codex']) assert.equal(h.G.unlocked(s, id), true, id);
+  for (const id of ['gacha', 'party', 'achievements', 'codex', 'quests']) assert.equal(h.G.unlocked(s, id), true, id);
 });
 
 test('段階は先へ進むだけで、戻らない', () => {
@@ -280,7 +280,7 @@ test('機能の解放条件：導入の段階と通算の最高到達階層（�
   for (const id of ['battle', 'menu', 'settings']) assert.equal(h.G.unlocked(s, id), true, id);
   h.AL.Game.skipGuide(NOW);
   const open = () => ids.filter((id) => h.G.unlocked(s, id));
-  assert.deepEqual(open(), ['heroes', 'equip', 'gacha', 'party', 'achievements', 'codex']);
+  assert.deepEqual(open(), ['heroes', 'equip', 'gacha', 'party', 'achievements', 'codex', 'quests']);
   // 境界値：解放の1つ手前の階層では使えず、ちょうどの階層で使える
   s.stats.maxFloorEver = 9; assert.equal(h.G.unlocked(s, 'shop'), false);
   s.stats.maxFloorEver = 10; assert.equal(h.G.unlocked(s, 'shop'), true);
@@ -300,7 +300,7 @@ test('解放の案内は一度だけ（案内済みは保存され、再読み�
   const h = setup();
   const s = newGame(h);
   h.AL.Game.skipGuide(NOW);
-  assert.deepEqual(h.plain(h.G.pendingUnlocks(s)), ['heroes', 'equip', 'gacha', 'party', 'achievements', 'codex']);
+  assert.deepEqual(h.plain(h.G.pendingUnlocks(s)), ['heroes', 'equip', 'gacha', 'party', 'achievements', 'codex', 'quests']);
   h.G.markSeen(s, h.G.pendingUnlocks(s));
   assert.deepEqual(h.plain(h.G.pendingUnlocks(s)), []);
   s.stats.maxFloorEver = 15;

@@ -320,6 +320,15 @@ label.toggle:last-child { border-bottom: none; }
 .ach { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); margin-bottom: 6px; }
 .ach.done { border-color: rgba(255, 204, 77, 0.5); }
 .ach.claimed { opacity: 0.55; }
+/* クエスト：未達成・達成（受取可）・受取済み・未解放を見分けられるようにする */
+.quest .q-state { flex: none; font-size: 11px; font-weight: 800; padding: 2px 6px; border-radius: 6px; white-space: nowrap; }
+.quest .q-state.todo { color: var(--sub); border: 1px solid var(--line2); }
+.quest .q-state.ready { color: #241800; background: var(--gold); }
+.quest .q-state.got { color: var(--good); border: 1px solid var(--good); }
+.quest.locked { opacity: 0.45; }
+.quest .q-act { flex: none; min-width: 64px; }
+.quest-next { border-color: var(--gold); }
+.quest-next .q-name { font-weight: 800; }
 .hero-big { width: 112px; height: 112px; animation: bob 2.4s ease-in-out infinite; filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.6)); }
 .dcard { border-left: 4px solid var(--accent); }
 .dcard.locked { opacity: 0.6; border-left-color: var(--dim); }
@@ -340,8 +349,11 @@ label.toggle:last-child { border-bottom: none; }
   #header .logo { font-size: 11px; line-height: 1.15; letter-spacing: 0.02em; }
   #header .logo .l2 { display: block; }
   #header .logo small { display: none; }
-  #currency { justify-content: flex-start; gap: 4px; }
-  .cur { padding: 2px 6px 2px 3px; font-size: 12px; gap: 3px; }
+  /* 通貨は横スクロールで隠さず、入りきらないときは2段に折り返してすべて見せる（高さは --head-h を JS で合わせる） */
+  #header { height: auto; min-height: 52px; padding-top: 2px; padding-bottom: 2px; }
+  #header .logo { flex: none; }
+  #currency { justify-content: flex-end; align-content: center; flex-wrap: wrap; gap: 3px 4px; overflow: visible; min-width: 0; }
+  .cur { padding: 1px 6px 1px 2px; font-size: 12px; gap: 3px; line-height: 18px; }
   .cur i { width: 16px; height: 16px; font-size: 9px; }
   .party-cards { gap: 3px; }
   .pc { padding: 3px; }
@@ -538,7 +550,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.1.0',
+    GAME_VERSION: '1.2.2',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -637,6 +649,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
         { id: 'party', step: 'done' },
         { id: 'achievements', step: 'done' },
         { id: 'codex', step: 'done' },
+        { id: 'quests', step: 'done' },
         { id: 'shop', step: 'done', floor: 10 },
         { id: 'dungeon', step: 'done', floor: 15 },
         { id: 'rebirth', step: 'done', floor: 50, orRebirth: true }
@@ -1365,6 +1378,51 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   A('mythic', '神話の欠片', 'mythicFound', 1, { crystals: 300 }, 'ミシック装備を入手する');
   A('idle_1', '放置の心得', 'idleClaims', 1, { crystals: 30 }, '放置報酬を受け取る');
 
+  // ===== クエスト（stat の値が target 以上で達成。値は Achievements.value と同じ取り方） =====
+  // main：順番に進む（前のクエストの報酬を受け取ると次が始まる）。条件は今の記録で判定する。
+  // daily：その日の開始時点からの増加量で判定し、日付が変わると進捗と受け取り済みが戻る（ショップと同じ端末の日付）。
+  // ach：一度達成すれば戻らない長期目標（既存の「実績」とは別のクエスト）。
+  // 報酬の魂晶は、序盤〜第50層の既存の魂晶収入（約750）とショップ（1日最大300）を参考に決めている。
+  function Q(id, name, stat, target, crystals) { return { id: id, name: name, stat: stat, target: target, reward: { crystals: crystals } }; }
+  D.QUESTS = {
+    main: [
+      Q('m01', '第5層に到達する', 'maxFloorEver', 5, 45),
+      Q('m02', '敵を50体倒す', 'kills', 50, 45),
+      Q('m03', '仲間をLv10にする', 'maxHeroLv', 10, 75),
+      Q('m04', '装備を3回強化する', 'enhances', 3, 75),
+      Q('m05', '第10層のボスを倒す', 'maxFloorEver', 11, 120),
+      Q('m06', '仲間を6人集める', 'heroesOwned', 6, 75),
+      Q('m07', '第20層に到達する', 'maxFloorEver', 20, 120),
+      Q('m08', '仲間をLv30にする', 'maxHeroLv', 30, 120),
+      Q('m09', '装備を+5まで強化する', 'maxEnh', 5, 150),
+      Q('m10', 'ダンジョンを1回クリアする', 'dungeonClears', 1, 150),
+      Q('m11', '第30層のボスを倒す', 'maxFloorEver', 31, 225),
+      Q('m12', '第50層に到達する', 'maxFloorEver', 50, 300),
+      Q('m13', '初めて転生する', 'rebirths', 1, 450)
+    ],
+    daily: [
+      Q('d_kills', '敵を100体倒す', 'kills', 100, 30),
+      Q('d_boss', 'ボスを1体倒す', 'bossKills', 1, 30),
+      Q('d_enh', '装備を5回強化する', 'enhances', 5, 30),
+      Q('d_level', '仲間のレベルを合計10上げる', 'levelUps', 10, 30)
+    ],
+    dailyBonus: { id: 'd_all', name: 'デイリークエストをすべて達成する', reward: { crystals: 60 } },
+    dailyStats: ['kills', 'bossKills', 'enhances', 'levelUps'],
+    ach: [
+      Q('a_boss1', '初めてボスを倒す', 'bossKills', 1, 75),
+      Q('a_boss50', 'ボスを50体倒す', 'bossKills', 50, 225),
+      Q('a_enh10', '装備を+10まで強化する', 'maxEnh', 10, 150),
+      Q('a_enh15', '装備を+15まで強化する', 'maxEnh', 15, 225),
+      Q('a_enh20', '装備を+20まで強化する', 'maxEnh', 20, 300),
+      Q('a_lv20', '仲間をLv20にする', 'maxHeroLv', 20, 75),
+      Q('a_lv40', '仲間をLv40にする', 'maxHeroLv', 40, 150),
+      Q('a_lv60', '仲間をLv60にする（限界突破が必要）', 'maxHeroLv', 60, 225),
+      Q('a_lv90', '仲間をLv90にする（限界突破が必要）', 'maxHeroLv', 90, 300),
+      Q('a_reb1', '転生を2回行う', 'rebirths', 2, 300),
+      Q('a_reb5', '転生を5回行う', 'rebirths', 5, 450)
+    ]
+  };
+
   // ===== ショップ =====
   // cost.gold は「最高到達階層の報酬スケール × gold」で価格が変動。limit=1日の購入上限（端末の日付基準）
   D.SHOP = [
@@ -1415,7 +1473,8 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       items: [],
       tower: { floor: 1, wave: 0, maxFloor: 1, autoAdvance: true, blockedFloor: 0 },
       stats: { kills: 0, bossKills: 0, gachaPulls: 0, maxFloorEver: 1, rebirths: 0, enhances: 0, dungeonClears: 0,
-        rushBest: 0, mythicFound: 0, idleClaims: 0, fullSets: 0, goldEarned: 0, expEarned: 0, heroesOwned: 0, maxLB: 0 },
+        rushBest: 0, mythicFound: 0, idleClaims: 0, fullSets: 0, goldEarned: 0, expEarned: 0, heroesOwned: 0, maxLB: 0,
+        levelUps: 0, maxHeroLv: 0, maxEnh: 0 },
       gacha: { pity: { standard: 0, pickup: 0 }, history: [], total: 0 },
       rebirth: { count: 0, upgrades: {}, totalPts: 0 },
       dungeons: {},
@@ -1427,7 +1486,9 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       idle: { kpm: C.IDLE.DEFAULT_KPM, lastClaimTs: now, lastResult: null },
       runInProgress: null,
       // 導入の進行状況。rewards は初回召喚・初回戦闘の報酬を受け取ったか（二重に受け取らないため）
-      guide: { step: 'title', rewards: { summon: false, battle: false }, seen: {}, legacy: false }
+      guide: { step: 'title', rewards: { summon: false, battle: false }, seen: {}, legacy: false },
+      // クエスト：main・ach は受け取り済みの ID、daily は日付・その日の開始時点の記録・受け取り済みの ID
+      quests: State.defaultQuests()
     };
     D.DUNGEONS.forEach(function (d) { s.dungeons[d.id] = { maxTier: 0, clears: 0, bestTime: 0, bestCount: 0, lastTier: 1 }; });
     C.START.heroes.forEach(function (id, i) {
@@ -1437,6 +1498,30 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     });
     s.stats.heroesOwned = C.START.heroes.length;
     return s;
+  };
+
+  State.defaultQuests = function () {
+    return { main: { claimed: {} }, ach: { claimed: {} }, daily: { day: '', base: {}, claimed: {} } };
+  };
+  // 保存データのクエスト：未知の ID は捨て、受け取り済みは true のものだけ残す（項目がない古いセーブは既定値）
+  State.sanitizeQuests = function (q) {
+    var out = State.defaultQuests();
+    if (!isObj(q)) return out;
+    var keep = function (src, list, dst) {
+      if (!isObj(src)) return;
+      list.forEach(function (x) { if (src[x.id] === true) dst[x.id] = true; });
+    };
+    keep(isObj(q.main) && q.main.claimed, D.QUESTS.main, out.main.claimed);
+    keep(isObj(q.ach) && q.ach.claimed, D.QUESTS.ach, out.ach.claimed);
+    if (isObj(q.daily) && typeof q.daily.day === 'string') {
+      out.daily.day = q.daily.day.slice(0, 20);
+      keep(q.daily.claimed, D.QUESTS.daily.concat([D.QUESTS.dailyBonus]), out.daily.claimed);
+      if (isObj(q.daily.base)) D.QUESTS.dailyStats.forEach(function (k) {
+        var v = q.daily.base[k];
+        if (typeof v === 'number' && isFinite(v) && v >= 0) out.daily.base[k] = v;
+      });
+    }
+    return out;
   };
 
   State.newHero = function () {
@@ -1656,6 +1741,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     s.idle.lastResult = isObj(id.lastResult) ? id.lastResult : null;
     s.runInProgress = (typeof raw.runInProgress === 'string' && D.DUNGEONS.some(function (d) { return d.id === raw.runInProgress; })) ? raw.runInProgress : null;
     s.guide = State.sanitizeGuide(raw.guide);
+    s.quests = State.sanitizeQuests(raw.quests);
     s.version = C.SAVE_VERSION;
     return s;
   };
@@ -2566,6 +2652,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       upgraded = sb.stat;
     }
     state.stats.enhances++;
+    state.stats.maxEnh = Math.max(state.stats.maxEnh || 0, it.enh);   // クエスト用：これまでの最高強化値
     touch(state);
     return { ok: true, enh: it.enh, upgraded: upgraded };
   };
@@ -2674,6 +2761,9 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       state.currency.exp -= cost;
       h.lv++; gained++;
     }
+    // クエスト用の記録（レベルアップの累計・これまでの最高レベル。転生でレベルが戻っても減らない）
+    state.stats.levelUps += gained;
+    state.stats.maxHeroLv = Math.max(state.stats.maxHeroLv || 0, h.lv);
     if (gained) AL.Events.emit('loadout');
     return gained;
   };
@@ -3690,6 +3780,121 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
+<script>/* js/core/quests.js */
+/* ABYSSAL LEGENDS - クエスト（メイン・デイリー・実績クエスト）
+ * 進捗は既存の記録（state.stats など）から計算し、保存するのは受け取り済みの ID とデイリーの開始時点の記録だけ。
+ * 報酬の付与と受け取り済みの記録は同じ処理で行うため、再読み込みしても二重に受け取れない。 */
+(function (G) {
+  'use strict';
+  var AL = G.AL = G.AL || {};
+  var C = AL.CONFIG, D = AL.DATA, U = AL.U;
+  var Quests = AL.Quests = {};
+
+  // 日付の前後比較用（U.dateKey は「年-月-日」でゼロ埋めがないため数値にする）
+  function dayNum(key) {
+    var m = /^(\d+)-(\d+)-(\d+)$/.exec(key || '');
+    return m ? (+m[1]) * 10000 + (+m[2]) * 100 + (+m[3]) : -1;
+  }
+
+  // 転生などで今の値が下がっても、これまでの最高値を保つ（既存のセーブはここで今の値から始まる）
+  Quests.sync = function (state) {
+    var lv = 0, enh = 0;
+    Object.keys(state.heroes).forEach(function (id) { lv = Math.max(lv, state.heroes[id].lv); });
+    state.items.forEach(function (it) { enh = Math.max(enh, it.enh || 0); });
+    state.stats.maxHeroLv = Math.max(state.stats.maxHeroLv || 0, lv);
+    state.stats.maxEnh = Math.max(state.stats.maxEnh || 0, enh);
+  };
+  Quests.value = function (state, stat) { return AL.Achievements.value(state, stat); };
+
+  // ---- デイリー ----
+  // 日付が進んだら、その時点の記録を開始点にして進捗と受け取り済みを戻す。端末の時刻を過去に戻しても戻さない。
+  Quests.refreshDay = function (state, now) {
+    var d = state.quests.daily, k = U.dateKey(now);
+    if (d.day === k) return false;
+    if (d.day && dayNum(k) < dayNum(d.day)) return false;
+    Quests.sync(state);
+    d.day = k;
+    d.base = {};
+    D.QUESTS.dailyStats.forEach(function (s) { d.base[s] = Quests.value(state, s); });
+    d.claimed = {};
+    return true;
+  };
+  Quests.dailyProgress = function (state, q) {
+    var base = state.quests.daily.base[q.stat];
+    var v = Quests.value(state, q.stat) - (typeof base === 'number' ? base : Quests.value(state, q.stat));
+    return Math.max(0, v);
+  };
+
+  // ---- 状態：{value, target, done, claimed, locked} ----
+  Quests.status = function (state, kind, q) {
+    Quests.sync(state);
+    if (kind === 'dailyBonus') {
+      var all = D.QUESTS.daily.filter(function (x) { return Quests.dailyProgress(state, x) >= x.target; }).length;
+      return { value: all, target: D.QUESTS.daily.length, done: all >= D.QUESTS.daily.length, claimed: !!state.quests.daily.claimed[q.id], locked: false };
+    }
+    var v = kind === 'daily' ? Quests.dailyProgress(state, q) : Quests.value(state, q.stat);
+    var claimed = kind === 'daily' ? !!state.quests.daily.claimed[q.id] : !!state.quests[kind].claimed[q.id];
+    var locked = false;
+    if (kind === 'main') { var cur = Quests.mainCurrent(state); locked = !claimed && (!cur || cur.id !== q.id); }
+    return { value: v, target: q.target, done: v >= q.target, claimed: claimed, locked: locked };
+  };
+  // 次に進めるメインクエスト（すべて受け取り済みなら null）
+  Quests.mainCurrent = function (state) {
+    for (var i = 0; i < D.QUESTS.main.length; i++) if (!state.quests.main.claimed[D.QUESTS.main[i].id]) return D.QUESTS.main[i];
+    return null;
+  };
+
+  Quests.find = function (kind, id) {
+    if (kind === 'dailyBonus' || id === D.QUESTS.dailyBonus.id) return { kind: 'dailyBonus', q: D.QUESTS.dailyBonus };
+    var q = (D.QUESTS[kind] || []).filter(function (x) { return x.id === id; })[0];
+    return q ? { kind: kind, q: q } : null;
+  };
+
+  // 受け取り：達成済み・未受取・（メインは順番どおり）のときだけ。付与と記録を同時に行う。
+  Quests.claim = function (state, kind, id, now) {
+    if (kind === 'daily' || kind === 'dailyBonus') Quests.refreshDay(state, now);
+    var f = Quests.find(kind, id);
+    if (!f) return { ok: false, msg: '不明なクエストです' };
+    var s = Quests.status(state, f.kind, f.q);
+    if (s.claimed) return { ok: false, msg: '受け取り済みです' };
+    if (s.locked) return { ok: false, msg: '前のクエストを先に進めてください' };
+    if (!s.done) return { ok: false, msg: 'まだ達成していません' };
+    if (f.kind === 'daily' || f.kind === 'dailyBonus') state.quests.daily.claimed[id] = true;
+    else state.quests[f.kind].claimed[id] = true;
+    state.currency.crystals = U.safe(state.currency.crystals + f.q.reward.crystals);
+    AL.Events.emit('questClaim', { kind: f.kind, id: id, reward: f.q.reward });
+    return { ok: true, reward: f.q.reward };
+  };
+
+  // 受け取れるクエストの一覧（メインは順番どおりに、続けて達成していれば次も含める）
+  Quests.claimable = function (state, now) {
+    Quests.refreshDay(state, now);
+    var out = [];
+    var main = D.QUESTS.main, claimed = U.clone(state.quests.main.claimed);
+    for (var i = 0; i < main.length; i++) {
+      if (claimed[main[i].id]) continue;
+      if (Quests.value(state, main[i].stat) >= main[i].target) { out.push({ kind: 'main', q: main[i] }); claimed[main[i].id] = true; }
+      else break;
+    }
+    D.QUESTS.daily.forEach(function (q) { var s = Quests.status(state, 'daily', q); if (s.done && !s.claimed) out.push({ kind: 'daily', q: q }); });
+    var b = Quests.status(state, 'dailyBonus', D.QUESTS.dailyBonus);
+    if (b.done && !b.claimed) out.push({ kind: 'dailyBonus', q: D.QUESTS.dailyBonus });
+    D.QUESTS.ach.forEach(function (q) { var s = Quests.status(state, 'ach', q); if (s.done && !s.claimed) out.push({ kind: 'ach', q: q }); });
+    return out;
+  };
+  // まとめて受け取る（kind を指定するとその種類だけ）。合計の魂晶を返す
+  Quests.claimAll = function (state, kind, now) {
+    var n = 0, crystals = 0;
+    Quests.claimable(state, now).forEach(function (x) {
+      if (kind && x.kind !== kind && !(kind === 'daily' && x.kind === 'dailyBonus')) return;
+      var r = Quests.claim(state, x.kind, x.q.id, now);
+      if (r.ok) { n++; crystals += r.reward.crystals; }
+    });
+    return { count: n, crystals: crystals };
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
 <script>/* js/core/game.js */
 /* ABYSSAL LEGENDS - セーブ管理とゲーム本体（ループ・時間管理） */
 (function (G) {
@@ -3847,6 +4052,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       Game.loadWarnings.push('前回中断したダンジョンの挑戦券を返却しました');
     }
     AL.Shop.refreshDay(Game.state, now);
+    AL.Quests.refreshDay(Game.state, now);
     AL.Dungeon.regenTickets(Game.state, now);
     Game.runner = new AL.Runner(Game.state);
     Game.runner.start();
@@ -3924,6 +4130,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     st.maxSeen = Math.max(st.maxSeen || 0, now);
     AL.Dungeon.regenTickets(st, now);
     AL.Shop.refreshDay(st, now);
+    AL.Quests.refreshDay(st, now);
     if (st.settings.autoLevel) AL.Heroes.autoLevelParty(st);
     Game.kpmAcc += dt;
     if (Game.kpmAcc >= 10) { Game.kpmAcc = 0; Game.runner.measureKpm(); }
@@ -4941,8 +5148,10 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     var ach = AL.Guide.unlocked(st, 'achievements') ? AL.Achievements.claimable(st).length : 0;
     var set = function (id, v) { var b = UI.$('#badge-' + id); if (b) b.textContent = v ? String(v) : ''; };
     set('achievements', ach);
+    var qn = AL.Guide.unlocked(st, 'quests') ? AL.Quests.claimable(st).length : 0;
+    set('quests', qn);
     set('battle', AL.Game.pendingIdle ? '!' : '');
-    set('menu', ach || '');
+    set('menu', (ach + qn) || '');
     set('dungeon', st.currency.tickets >= AL.CONFIG.TICKETS.MAX && st.stats.maxFloorEver >= 15 && AL.Guide.unlocked(st, 'dungeon') ? '!' : '');
   };
 
@@ -4958,7 +5167,18 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     if (el._key === key) return;
     el._key = key;
     el.innerHTML = items.map(function (i) { return '<span class="cur" title="' + i[2] + '"><i class="' + i[0] + '">' + i[1] + '</i>' + i[3] + '</span>'; }).join('');
+    UI.fitHeader();
   };
+  // 狭い画面で通貨が2段になったとき、ヘッダーの下に重なる表示（戦闘の概要・メニュー）の位置をヘッダーの高さに合わせる
+  UI.fitHeader = function () {
+    var h = UI.$('#header'), root = document.documentElement.style;
+    if (!h) return;
+    root.removeProperty('--head-h');
+    var std = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--head-h')) || 52;
+    var px = Math.ceil(h.getBoundingClientRect().height);
+    if (px > std) root.setProperty('--head-h', px + 'px');
+  };
+  G.addEventListener('resize', function () { UI.fitHeader(); });
 
   // ---- 通知 ----
   UI.toast = function (msg, type, ms) {
@@ -5226,6 +5446,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       var est = AL.Idle.compute(st, 3600);
       el.innerHTML =
         '<div class="screen-title battle-only-mobile">バトル <span class="tag">自動戦闘中</span></div>' +
+        '<div id="bs-quest"></div>' +
         (AL.Game.pendingIdle ? '<div class="panel" style="border-color:var(--gold)"><div class="row between"><div><b class="gold">放置報酬が届いています</b><div class="tiny sub">' + U.fmtTime(AL.Game.pendingIdle.used) + 'の報酬</div></div><button class="btn gold" data-act="idleOpen">受け取る</button></div></div>' : '') +
         '<div class="panel"><h3>戦闘中の敵</h3><div id="bs-enemies"></div></div>' +
         '<div class="panel"><h3>今回のプレイの成果</h3><div id="bs-session"></div></div>' +
@@ -5243,6 +5464,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
         '<div class="panel"><h3>発動中の相性</h3>' + (syn.length ? syn.map(function (s) { return '<div class="syn on"><b>' + esc(s.name) + '</b>　<span class="small">' + esc(s.desc) + '</span></div>'; }).join('') : '<div class="dim small">なし（編成画面で相性を確認できます）</div>') + '</div>' +
         '<div class="panel"><div class="row between"><h3 style="margin:0">戦闘ログ</h3><span class="tiny dim">スキル・撃破・ボスの行動を記録</span></div><div class="log mt" id="bs-log"></div></div>';
       UI.tickBattleScreen(true);
+      if (UI.questTick) UI.questTick(true);
     }
   });
 
@@ -5837,7 +6059,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   UI.register({
     id: 'menu', name: 'その他', icon: '≡', nav: 'main',
     render: function (el) {
-      var tiles = ['dungeon', 'rebirth', 'codex', 'achievements', 'shop', 'settings'];
+      var tiles = ['quests', 'dungeon', 'rebirth', 'codex', 'achievements', 'shop', 'settings'];
       el.innerHTML = '<div class="screen-title">メニュー</div><div class="menu-grid">' + tiles.map(function (id) {
         var s = UI.screens[id];
         if (!AL.Guide.unlocked(UI.st(), id)) return '<button class="menu-tile locked" disabled><span class="ni">🔒</span>' + s.name + '<span class="lock">' + esc(UI.lockText(id)) + '</span></button>';
@@ -5846,6 +6068,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       '<div class="panel mt"><div class="small sub">ABYSSAL LEGENDS v' + C.GAME_VERSION + '</div><div class="tiny dim">セーブデータはこの端末のブラウザ内に保存されます。機種変更やブラウザのデータ削除に備えて、設定画面からバックアップを書き出してください。</div></div>';
       var n = AL.Achievements.claimable(UI.st()).length;
       var b = UI.$('#badge-m-achievements'); if (b) b.textContent = n || '';
+      var qb = UI.$('#badge-m-quests'); if (qb) qb.textContent = AL.Quests.claimable(UI.st()).length || '';
     }
   });
 
@@ -6205,6 +6428,144 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
+<script>/* js/ui/quests.js */
+/* ABYSSAL LEGENDS - クエスト画面と、バトル画面の「次の目標」 */
+(function (G) {
+  'use strict';
+  var AL = G.AL, UI = AL.UI, C = AL.CONFIG, D = AL.DATA, U = AL.U, esc = U.esc;
+  var Q = AL.Quests, ui = UI.ui;
+  var TABS = [['main', 'メイン'], ['daily', 'デイリー'], ['ach', '実績']];
+
+  // 1件分の表示内容。状態は「未達成」「達成（受取可）」「受取済み」「未解放（メインの先のクエスト）」の4つ
+  function view(s) {
+    return {
+      width: (Math.min(1, s.target ? s.value / s.target : 0) * 100).toFixed(1) + '%',
+      prog: U.fmt(Math.min(s.value, s.target)) + '/' + U.fmt(s.target),
+      label: s.claimed ? ['got', '受取済み'] : s.locked ? ['todo', '未解放'] : s.done ? ['ready', '達成'] : ['todo', '未達成'],
+      ready: s.done && !s.claimed && !s.locked
+    };
+  }
+  function row(kind, q, s) {
+    var v = view(s);
+    var act = s.claimed ? '' : '<button class="btn sm gold q-act" data-act="questClaim" data-kind="' + kind + '" data-id="' + q.id + '"' + (v.ready ? '' : ' disabled') + '>受取</button>';
+    return '<div class="ach quest' + (v.ready ? ' done' : '') + (s.claimed ? ' claimed' : '') + (s.locked ? ' locked' : '') + '" data-quest="' + q.id + '">' +
+      '<div class="grow"><div class="row"><b class="grow">' + esc(q.name) + '</b><span class="q-state ' + v.label[0] + '">' + v.label[1] + '</span></div>' +
+      '<div class="tiny sub">報酬：魂晶 ' + q.reward.crystals + '</div>' +
+      '<div class="bar mt"><i style="width:' + v.width + '"></i></div><div class="tiny dim num q-prog">' + v.prog + '</div></div>' + act + '</div>';
+  }
+  // タブに表示するクエスト（表示順）
+  function items(tab) {
+    if (tab === 'main') return D.QUESTS.main.map(function (q) { return { kind: 'main', q: q }; });
+    if (tab === 'daily') return D.QUESTS.daily.map(function (q) { return { kind: 'daily', q: q }; }).concat([{ kind: 'dailyBonus', q: D.QUESTS.dailyBonus }]);
+    return D.QUESTS.ach.map(function (q) { return { kind: 'ach', q: q }; });
+  }
+  function counts(st) {
+    var c = { main: 0, daily: 0, ach: 0 };
+    Q.claimable(st).forEach(function (x) { c[x.kind === 'dailyBonus' ? 'daily' : x.kind]++; });
+    return c;
+  }
+  function tabText(t, n) { return t[1] + (n ? '（' + n + '）' : ''); }
+  function claimAllText(n) { return 'まとめて受け取る（' + n + '件）'; }
+
+  UI.register({
+    id: 'quests', name: 'クエスト', icon: '任', nav: 'more',
+    render: function (el) {
+      var st = UI.st();
+      Q.refreshDay(st, Date.now());
+      var tab = ui.questTab || 'main', c = counts(st);
+      var html = '<div class="screen-title">クエスト</div><div class="tabs">' + TABS.map(function (t) {
+        return '<button class="' + (t[0] === tab ? 'on' : '') + '" data-act="questTab" data-id="' + t[0] + '">' + tabText(t, c[t[0]]) + '</button>';
+      }).join('') + '</div>';
+      // まとめて受け取るボタンは常に置き、受け取れるものがないときは隠す（戦闘中の更新でボタンを作り直さないため）
+      html += '<button class="btn gold block mb q-all" data-act="questClaimAll" data-kind="' + tab + '"' + (c[tab] ? '' : ' style="display:none"') + '>' + claimAllText(c[tab]) + '</button>';
+      if (tab === 'main') {
+        var cur = Q.mainCurrent(st), done = D.QUESTS.main.filter(function (q) { return st.quests.main.claimed[q.id]; }).length;
+        html += '<div class="tiny sub mb">順番に進むクエストです。報酬を受け取ると次のクエストが始まります。（' + done + '/' + D.QUESTS.main.length + '）</div>' +
+          (cur ? '' : '<div class="notice info">メインクエストをすべて達成しました。</div>');
+      } else if (tab === 'daily') {
+        html += '<div class="tiny sub mb">毎日0時（この端末の時刻）に進捗と受け取りが戻ります。今日の開始時点からの記録で数えます。</div>';
+      } else {
+        html += '<div class="tiny sub mb">一度達成すると戻らない長期の目標です。（「実績」画面の実績とは別の報酬です）</div>';
+      }
+      html += items(tab).map(function (x) { return row(x.kind, x.q, Q.status(st, x.kind, x.q)); }).join('');
+      el.innerHTML = html;
+    }
+  });
+  // 討伐・階層・育成による進捗は UI.questScreenTick で数値とバーだけを更新する（画面全体は作り直さない）
+  UI.listen(['rebirth', 'questClaim', 'stateReplaced'], ['quests']);
+
+  // クエスト画面を開いているあいだ、進捗の数値・バー・状態の表示だけを書き換える。
+  // ボタンなどの要素は作り直さない。受取済みの状態が変わったとき（日付の切り替え）だけ画面を作り直す。
+  UI.questScreenTick = function () {
+    var el = UI.$('#screen'), st = UI.st();
+    if (UI.current !== 'quests' || !el || !st || UI.dirty) return;
+    Q.refreshDay(st, Date.now());
+    var tab = ui.questTab || 'main', list = items(tab), rows = el.querySelectorAll('.quest[data-quest]'), stats = [];
+    if (rows.length !== list.length) return UI.render();
+    for (var i = 0; i < list.length; i++) {
+      var s = Q.status(st, list[i].kind, list[i].q);
+      if (rows[i].dataset.quest !== list[i].q.id || !!s.claimed !== rows[i].classList.contains('claimed')) return UI.render();
+      stats.push(s);
+    }
+    stats.forEach(function (s, i) {
+      var r = rows[i], v = view(s), bar = r.querySelector('.bar i'), prog = r.querySelector('.q-prog'), lab = r.querySelector('.q-state'), btn = r.querySelector('.q-act');
+      if (bar && parseFloat(bar.style.width) !== parseFloat(v.width)) bar.style.width = v.width;
+      if (prog && prog.textContent !== v.prog) prog.textContent = v.prog;
+      if (lab && lab.textContent !== v.label[1]) { lab.className = 'q-state ' + v.label[0]; lab.textContent = v.label[1]; }
+      r.classList.toggle('done', v.ready);
+      r.classList.toggle('locked', !!s.locked);
+      if (btn && btn.disabled !== !v.ready) btn.disabled = !v.ready;
+    });
+    var c = counts(st);
+    el.querySelectorAll('.tabs [data-act="questTab"]').forEach(function (b) {
+      var t = TABS.filter(function (x) { return x[0] === b.dataset.id; })[0], txt = t && tabText(t, c[t[0]]);
+      if (t && b.textContent !== txt) b.textContent = txt;
+    });
+    var all = el.querySelector('.q-all');
+    if (all) {
+      var disp = c[tab] ? '' : 'none', txt = claimAllText(c[tab]);
+      if (all.style.display !== disp) all.style.display = disp;
+      if (all.textContent !== txt) all.textContent = txt;
+    }
+  };
+
+  UI.action('questTab', function (el) { ui.questTab = el.dataset.id; UI.render(); });
+  UI.action('questClaim', function (el) {
+    var r = Q.claim(UI.st(), el.dataset.kind, el.dataset.id, Date.now());
+    if (r.ok) AL.Game.save();
+    UI.toast(r.ok ? '魂晶を' + r.reward.crystals + '個受け取りました' : r.msg, r.ok ? 'good' : 'bad');
+    UI.render(); UI.renderCurrency(); UI.updateBadges(); UI.questTick(true);
+  });
+  UI.action('questClaimAll', function (el) {
+    var r = Q.claimAll(UI.st(), el.dataset.kind, Date.now());
+    if (r.count) AL.Game.save();
+    UI.toast(r.count ? r.count + '件・魂晶' + r.crystals + '個を受け取りました' : '受け取れるクエストはありません', r.count ? 'good' : 'bad');
+    UI.render(); UI.renderCurrency(); UI.updateBadges(); UI.questTick(true);
+  });
+
+  // バトル画面の上部に、次に進めるメインクエストを表示する。
+  // 進捗が変わっただけなら数値だけを書き換え、ボタンは作り直さない。
+  UI.questTick = function (force) {
+    var box = UI.$('#bs-quest'), st = UI.st();
+    if (!box || !st) return;
+    var cur = AL.Guide.unlocked(st, 'quests') ? Q.mainCurrent(st) : null;
+    var s = cur && Q.status(st, 'main', cur);
+    var key = cur ? cur.id + (s.done ? ':done' : ':todo') : '';
+    var prog = cur ? U.fmt(Math.min(s.value, s.target)) + '/' + U.fmt(s.target) + '　報酬：魂晶 ' + cur.reward.crystals : '';
+    if (force || box._k !== key) {
+      box.innerHTML = cur ? '<div class="panel quest-next"><div class="row between"><div class="grow"><div class="tiny sub">次の目標（メインクエスト）</div><div class="q-name">' + esc(cur.name) + '</div>' +
+        '<div class="tiny num q-prog">' + prog + '</div></div>' +
+        (s.done ? '<button class="btn sm gold" data-act="questClaim" data-kind="main" data-id="' + cur.id + '">受取</button>'
+          : '<button class="btn sm" data-act="nav" data-id="quests">クエスト</button>') + '</div></div>' : '';
+      box._k = key;
+      return;
+    }
+    var p = box.querySelector('.q-prog');
+    if (p && p.textContent !== prog) p.textContent = prog;
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
 <script>/* js/ui/guide.js */
 /* ABYSSAL LEGENDS - はじめての冒険の画面（タイトル・初回召喚・はじめての戦い・育成の案内・機能の解放） */
 (function (G) {
@@ -6217,6 +6578,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     gacha: '魂晶を使って、新しい仲間を召喚できます。',
     party: '戦う5人と並び順（前衛・後衛）を入れ替えられます。',
     achievements: '目標を達成すると、魂晶などの報酬を受け取れます。',
+    quests: '次に進める目標（メイン）・毎日の目標（デイリー）・長期の目標（実績）を確認し、達成すると魂晶を受け取れます。',
     codex: '出会った仲間・敵・装備を確認できます。',
     shop: 'ゴールドで強化石・魂晶・挑戦券などと交換できます。',
     dungeon: '挑戦券を使って特別な戦いに挑み、強化石や装備をたくさん手に入れます。',
@@ -6409,7 +6771,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       AL.Game.frame(now);
       AL.Scene.render();
       if (now - lastTick > 120) { lastTick = now; UI.tickBattle(); }
-      if (now - lastSlow > 500) { lastSlow = now; UI.renderCurrency(); UI.updateBadges(); UI.guideTick(); }
+      if (now - lastSlow > 500) { lastSlow = now; UI.renderCurrency(); UI.updateBadges(); UI.guideTick(); UI.questTick(); UI.questScreenTick(); }
       errCount = 0;
     } catch (e) {
       errCount++;
