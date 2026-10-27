@@ -1057,6 +1057,61 @@ test('導入中は仲間タブの「編成」が鍵付きで、押しても開�
   }
 });
 
+// ===== 戦闘画面の仲間カード（5人編成） =====
+
+test('仲間カード（5人編成・320px／360px／390px）：横にはみ出さず、HP の現在値と最大値がすべて表示される', async () => {
+  // 合成フィクスチャ（5人編成）と、編成の5人を Lv999 にした合成データの両方で確かめる
+  const variants = [['fixture', null], ['Lv999', (d) => { for (const id of d.party) if (id) d.heroes[id].lv = 999; }]];
+  for (const [label, edit] of variants) {
+    const o = JSON.parse(FIXTURES[0].text);
+    const d = o.format === 'ABYSSAL_LEGENDS_SAVE' ? o.data : o;
+    assert.equal(d.party.filter(Boolean).length, 5, '前提：合成フィクスチャが5人編成ではありません');
+    if (edit) { edit(d); delete o.checksum; }
+    for (const width of [320, 360, 390]) {
+      const { context, page, errors } = await openPhone();
+      try {
+        await page.setViewportSize({ width, height: 664 });
+        await seedSave(page, JSON.stringify(o));
+        await boot(page);
+        await page.click('[data-title="continue"]');
+        await page.evaluate(() => { AL.UI.closeModal(); AL.UI.show('battle'); });
+        await page.waitForTimeout(400);
+        await page.evaluate(() => { AL.Game.paused = true; });
+        await page.waitForTimeout(200);
+        const r = await page.evaluate(() => {
+          const pc = document.getElementById('party-cards'), cards = [...pc.querySelectorAll('.pc')];
+          const allies = AL.Game.runner.battle.allies;
+          return {
+            iw: innerWidth, sw: document.documentElement.scrollWidth, rowOver: pc.scrollWidth - pc.clientWidth, n: cards.length,
+            // カードの中の要素が、そのカードの外にはみ出していない（隣のカードと重ならない）
+            outside: cards.flatMap((c) => { const cr = c.getBoundingClientRect(); return [...c.querySelectorAll('*')].filter((k) => { const q = k.getBoundingClientRect(); return q.width && (q.right > cr.right + 0.5 || q.left < cr.left - 0.5); }).map((k) => k.className); }),
+            hp: allies.map((u) => { const c = document.getElementById('pc-' + u.uid), cur = c.querySelector('.hp-cur'), max = c.querySelector('.hp-max'), cr = c.getBoundingClientRect();
+              const inside = (e) => { const q = e.getBoundingClientRect(); return q.left >= cr.left - 0.5 && q.right <= cr.right + 0.5 && e.scrollWidth <= e.clientWidth + 1; };
+              return { cur: cur.textContent, max: max.textContent, want: [AL.U.fmt(u.hp), '/' + AL.U.fmt(u.maxHp)], text: c.querySelector('.pc-hp').textContent,
+                visible: inside(cur) && inside(max), lines: cur.getBoundingClientRect().top === max.getBoundingClientRect().top ? 1 : 2 }; })
+          };
+        });
+        const where = `${label}・${width}px`;
+        assert.equal(r.iw, width, `${where}：画面幅が広がっています（横にはみ出しています）`);
+        assert.ok(r.sw <= r.iw, `${where}：横にはみ出しています`);
+        assert.equal(r.n, 5, `${where}：仲間カードが5枚ではありません`);
+        assert.ok(r.rowOver <= 0, `${where}：仲間カードの列がはみ出しています（${r.rowOver}px）`);
+        assert.deepEqual(r.outside, [], `${where}：カードの外にはみ出した表示があります`);
+        for (const h of r.hp) {
+          assert.deepEqual([h.cur, h.max], h.want, `${where}：HP の数値が省略・変更されています`);
+          assert.equal(h.text, h.want.join(''), `${where}：HP の表示が「現在値/最大値」になっていません`);
+          assert.ok(h.visible, `${where}：HP の数値が欠けています ${JSON.stringify(h)}`);
+        }
+        console.log(`# 仲間カード ${where}：HP の行数 ${r.hp.map((h) => h.lines).join(',')}`);
+        await page.screenshot({ path: `${SHOTS}/phone-party-cards-${label}-${width}.png`, clip: { x: 0, y: 0, width, height: 560 } });
+        assert.deepEqual(errors, []);
+      } finally {
+        await context.close();
+      }
+    }
+  }
+});
+
 // ===== 通貨表示 =====
 
 // 上部の通貨表示：すべての通貨がヘッダーの中に見切れずに収まり、横にはみ出さないこと
