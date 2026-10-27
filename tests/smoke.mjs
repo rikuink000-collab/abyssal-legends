@@ -776,7 +776,7 @@ test('スキップ：初回召喚の画面から案内を終えると、報酬�
 
 // ===== クエスト =====
 
-test('クエスト画面（スマホ幅）：3つのタブ・進捗「x/y」・状態の区別・受け取り・再読み込みしても二重に受け取れない', async () => {
+test('クエスト画面（スマホ幅）：メイン・デイリーの2つのタブ・進捗「x/y」・状態の区別・受け取り・再読み込みしても二重に受け取れない', async () => {
   const { context, page, errors } = await openPhone();
   try {
     // 既存プレイヤー（合成フィクスチャ）：達成済みのクエストを受け取れる
@@ -794,7 +794,7 @@ test('クエスト画面（スマホ幅）：3つのタブ・進捗「x/y」・�
     await page.click('.menu-tile[data-id="quests"]');
     assert.equal(await page.evaluate(() => AL.UI.current), 'quests');
     const tabs = await page.$$eval('[data-act="questTab"]', (bs) => bs.map((b) => b.dataset.id));
-    assert.deepEqual(tabs, ['main', 'daily', 'ach']);
+    assert.deepEqual(tabs, ['main', 'daily'], '実績クエストは実績画面に移り、クエスト画面のタブはメイン・デイリーの2つです');
     const rows = () => page.$$eval('.quest', (qs) => qs.map((q) => ({ id: q.dataset.quest, state: q.querySelector('.q-state').textContent,
       prog: q.querySelector('.q-prog').textContent, btn: !!q.querySelector('[data-act="questClaim"]') })));
     let main = await rows();
@@ -815,17 +815,15 @@ test('クエスト画面（スマホ幅）：3つのタブ・進捗「x/y」・�
     assert.notEqual(main[1].state, '未解放');
     assert.equal(await page.evaluate(() => AL.Game.state.currency.crystals), c0 + 45);
 
-    // デイリー・実績タブ
+    // デイリータブ
     await page.click('[data-act="questTab"][data-id="daily"]');
     const daily = await rows();
     assert.deepEqual(daily.map((r) => r.id), ['d_kills', 'd_boss', 'd_enh', 'd_level', 'd_all']);
     assert.match(await page.textContent('#screen'), /毎日0時（この端末の時刻）/);
     await page.screenshot({ path: `${SHOTS}/phone-quests-daily.png` });
-    await page.click('[data-act="questTab"][data-id="ach"]');
-    const ach = await rows();
-    assert.equal(ach.length, 11);
-    assert.ok(ach.some((r) => r.state === '達成') && ach.some((r) => r.state === '未達成'), '実績クエストの状態が区別されていません');
-    // まとめて受け取る → 再読み込みしても受け取り済みのまま、魂晶は増えない
+    // メインタブでまとめて受け取る → 再読み込みしても受け取り済みのまま、魂晶は増えない
+    // （実績クエストの表示・受け取りは、実績画面のテストで確かめる）
+    await page.click('[data-act="questTab"][data-id="main"]');
     await page.click('[data-act="questClaimAll"]');
     const c1 = await page.evaluate(() => AL.Game.state.currency.crystals);
     assert.ok(c1 > c0 + 45);
@@ -837,8 +835,8 @@ test('クエスト画面（スマホ幅）：3つのタブ・進捗「x/y」・�
     const after = await page.evaluate(() => ({ crystals: AL.Game.state.currency.crystals, m01: !!AL.Game.state.quests.main.claimed.m01,
       claimMain: AL.Quests.claim(AL.Game.state, 'main', 'm01', Date.now()).ok }));
     assert.deepEqual(after, { crystals: c1, m01: true, claimMain: false });
-    await page.click('[data-act="questTab"][data-id="ach"]');
-    assert.ok((await rows()).every((r) => r.state !== '達成'), '再読み込み後に受け取れる実績クエストが残っています');
+    await page.click('[data-act="questTab"][data-id="main"]');
+    assert.ok((await rows()).every((r) => r.state !== '達成'), '再読み込み後に受け取れるメインクエストが残っています');
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
@@ -1024,14 +1022,18 @@ test('下部ナビ（スマホ幅）：バトル・仲間・クエスト・装�
     // クエストタブから直接開け、その他メニューからも開ける
     await page.click('#nav [data-id="quests"]');
     assert.equal(await page.evaluate(() => AL.UI.current), 'quests');
-    assert.deepEqual(await page.$$eval('[data-act="questTab"]', (bs) => bs.map((b) => b.dataset.id)), ['main', 'daily', 'ach']);
+    assert.deepEqual(await page.$$eval('[data-act="questTab"]', (bs) => bs.map((b) => b.dataset.id)), ['main', 'daily']);
     assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#nav .nav-item.active')].map((b) => b.dataset.id)), ['quests']);
-    const badge = await page.evaluate(() => ({ q: document.getElementById('badge-quests').textContent, n: AL.Quests.claimable(AL.Game.state).length }));
+    // クエストのバッジはメイン・デイリーの件数（実績クエストは実績のバッジで数える）
+    const badge = await page.evaluate(() => ({ q: document.getElementById('badge-quests').textContent, n: AL.Quests.claimable(AL.Game.state).filter((x) => x.kind !== 'ach').length }));
     assert.equal(badge.q, String(badge.n || ''), 'クエストのタブに受け取れる件数が出ていません');
     await page.evaluate(() => AL.UI.show('menu'));
     assert.ok(await page.isVisible('.menu-tile[data-id="quests"]'), 'その他メニューからクエストを開けません');
     await page.click('.menu-tile[data-id="quests"]');
     assert.equal(await page.evaluate(() => AL.UI.current), 'quests');
+    // クエスト画面から実績画面へ移れる（実績クエストの移動先）
+    await page.click('#screen [data-act="nav"][data-id="achievements"]');
+    assert.equal(await page.evaluate(() => AL.UI.current), 'achievements');
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
@@ -1051,6 +1053,174 @@ test('導入中は仲間タブの「編成」が鍵付きで、押しても開�
     assert.equal(r.disabled, true, '導入中に編成が押せます');
     assert.match(r.text, /🔒/);
     assert.equal(await page.evaluate(() => { AL.UI.show('party'); return AL.UI.current; }), 'heroes', '導入中に編成が開きました');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+// ===== 実績画面（実績と実績クエストの統合） =====
+
+const goalRows = (page) => page.$$eval('#screen .quest[data-goal]', (qs) => qs.map((q) => ({ key: q.dataset.goal, state: q.querySelector('.q-state').textContent,
+  prog: q.querySelector('.q-prog').textContent, btn: (() => { const b = q.querySelector('[data-act="achClaim"]'); return b ? (b.disabled ? 'off' : 'on') : 'none'; })() })));
+const storedClaims = (page) => page.evaluate(() => { const t = JSON.parse(localStorage.getItem('abyssal_legends_save')); const d = t.data || t;
+  return { ach: Object.keys(d.achievements.claimed).sort(), quest: Object.keys(d.quests.ach.claimed).sort(), crystals: d.currency.crystals }; });
+
+test('実績画面（スマホ幅）：実績32件と実績クエスト11件を3つの分類で表示し、受け取りはすぐ保存され、再読み込み後も二重に受け取れない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await seedSave(page, FIXTURES[0].text);
+    await boot(page);
+    await page.click('[data-title="continue"]');
+    await page.evaluate(() => { AL.UI.closeModal(); AL.Game.paused = true; });
+    // その他メニューの実績（🏆）に、受け取れる件数のバッジが出る
+    await page.evaluate(() => AL.UI.show('menu'));
+    const tile = await page.evaluate(() => { const t = document.querySelector('.menu-tile[data-id="achievements"]'); return { text: t.innerText, badge: document.getElementById('badge-m-achievements').textContent, n: AL.Achievements.claimableEntries(AL.Game.state).length }; });
+    assert.match(tile.text, /🏆/);
+    assert.ok(tile.n > 0, '前提：受け取れる実績があります');
+    assert.equal(tile.badge, String(tile.n));
+    await page.click('.menu-tile[data-id="achievements"]');
+    assert.equal(await page.evaluate(() => AL.UI.current), 'achievements');
+
+    // 3つの分類のタブ（件数つき）と、全43件
+    const tabs = await page.$$eval('[data-act="achTab"]', (bs) => bs.map((b) => ({ id: b.dataset.id, text: b.innerText.replace(/\s+/g, ' ') })));
+    assert.deepEqual(tabs.map((t) => t.id), ['main', 'grow', 'total']);
+    for (const [i, name] of ['メイン実績', '育成実績', '累計実績'].entries()) assert.match(tabs[i].text, new RegExp(name + ' \\d+/\\d+'), `分類の件数がありません：${tabs[i].text}`);
+    const all = {};
+    for (const t of ['main', 'grow', 'total']) {
+      await page.click(`[data-act="achTab"][data-id="${t}"]`);
+      all[t] = await goalRows(page);
+      assert.match(await page.textContent('#screen .ach-sum'), /達成 \d+\/\d+・受取済み \d+\/\d+/);
+    }
+    const keys = [...all.main, ...all.grow, ...all.total].map((r) => r.key);
+    assert.equal(keys.length, 43);
+    assert.equal(keys.filter((k) => k.startsWith('ach:')).length, 32);
+    assert.equal(keys.filter((k) => k.startsWith('quest:')).length, 11);
+    assert.equal(new Set(keys).size, 43);
+    // 状態の区別（受取済み・達成・未達成）と、既存の受取記録（フィクスチャの受取済みの実績）の反映
+    const flat = [...all.main, ...all.grow, ...all.total];
+    for (const st of ['受取済み', '達成', '未達成']) assert.ok(flat.some((r) => r.state === st), `${st} の項目がありません`);
+    const claimedAch = await page.evaluate(() => Object.keys(AL.Game.state.achievements.claimed));
+    for (const id of claimedAch) assert.equal(flat.find((r) => r.key === 'ach:' + id).state, '受取済み', `受取済みの ${id} が受取済みになっていません`);
+    for (const r of flat) assert.equal(r.btn === 'on', r.state === '達成', `${r.key}：受取ボタンの状態が違います`);
+    await page.click('[data-act="achTab"][data-id="main"]');
+    await page.screenshot({ path: `${SHOTS}/phone-achievements-main.png` });
+
+    // 1件受け取る → すぐ保存される（自動保存を待たない）
+    const target = (await goalRows(page)).find((r) => r.state === '達成' && r.key.startsWith('quest:'));
+    assert.ok(target, '前提：受け取れる実績クエストがあります');
+    const [src, id] = target.key.split(':');
+    const c0 = await page.evaluate(() => AL.Game.state.currency.crystals);
+    const reward = await page.evaluate(([src, id]) => AL.Achievements.entries().find((e) => e.src === src && e.id === id).reward.crystals, [src, id]);
+    // 保存の呼び出しを数える（自動保存を先送りし、受け取りの処理による保存だけを数える）
+    await page.evaluate(() => { AL.Game.autosaveAt = Date.now() + 3600e3; const orig = AL.Game.save; window.__saves = [];
+      AL.Game.save = function (o) { const r = orig.call(this, o); window.__saves.push({ ok: r.ok, at: Date.now() }); AL.Game.autosaveAt = Date.now() + 3600e3; return r; }; });
+    await page.click(`#screen [data-act="achClaim"][data-src="${src}"][data-id="${id}"]`);
+    const c1 = await page.evaluate(() => AL.Game.state.currency.crystals);
+    assert.equal(c1, c0 + reward);
+    const saves1 = await page.evaluate(() => window.__saves.length);
+    assert.equal(saves1, 1, `受け取り1回につき保存は1回（${saves1}回）`);
+    let saved = await storedClaims(page);
+    assert.ok(saved.quest.includes(id), '受け取った直後に保存されていません');
+    assert.equal(saved.crystals, c1);
+    assert.equal((await goalRows(page)).find((r) => r.key === target.key).state, '受取済み');
+
+    // 分類ごとにまとめて受け取る → 受け取れる分だけ増え、二度目は増えない
+    await page.click('[data-act="achTab"][data-id="grow"]');
+    const growReady = await page.evaluate(() => AL.Achievements.claimableEntries(AL.Game.state, 'grow').reduce((a, e) => a + (e.reward.crystals || 0), 0));
+    assert.ok(growReady > 0, '前提：育成実績に受け取れる報酬があります');
+    await page.click('[data-act="achClaimAll"][data-cat="grow"]');
+    const c2 = await page.evaluate(() => AL.Game.state.currency.crystals);
+    assert.equal(c2, c1 + growReady);
+    assert.equal(await page.evaluate(() => window.__saves.length), saves1 + 1, 'まとめて受け取っても保存は1回');
+    const again = await page.evaluate(() => AL.Achievements.claimableEntries(AL.Game.state, 'grow').length);
+    assert.equal(again, 0);
+    saved = await storedClaims(page);
+    assert.equal(saved.crystals, c2, 'まとめて受け取った直後に保存されていません');
+
+    // 再読み込み後も受取済みのまま、同じ報酬は受け取れない
+    await page.reload();
+    await page.waitForFunction(() => !document.getElementById('loading') && window.AL && AL.Game && AL.Game.state);
+    await page.click('[data-title="continue"]');
+    await page.evaluate(() => { AL.UI.closeModal(); AL.Game.paused = true; AL.UI.show('achievements'); });
+    const after = await page.evaluate(([src, id]) => ({ crystals: AL.Game.state.currency.crystals, claimed: AL.Game.state.quests.ach.claimed[id] === true,
+      retry: AL.Achievements.claimEntry(AL.Game.state, src, id, Date.now()).ok, grow: AL.Achievements.claimableEntries(AL.Game.state, 'grow').length }), [src, id]);
+    assert.deepEqual(after, { crystals: c2, claimed: true, retry: false, grow: 0 });
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('実績画面を開いたままでも進捗が更新され、メニューを開いたままでもバッジが更新される（画面全体は作り直さない）', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await startAsVeteran(page);
+    await page.evaluate(() => { AL.UI.closeModal(); AL.Game.paused = true; AL.UI.ui.achCat = 'total'; AL.UI.show('achievements'); });
+    const before = (await goalRows(page)).find((r) => r.key === 'ach:kills_0');
+    assert.equal(before.state, '未達成');
+    // 描画回数を数え、敵を倒した記録だけを増やす（戦闘で討伐数が増えた状態）
+    await page.evaluate(() => { const def = AL.UI.screens.achievements, orig = def.render; window.__achRenders = 0;
+      def.render = function (el) { window.__achRenders++; return orig.call(this, el); };
+      window.__achBtn = document.querySelector('[data-act="achClaim"][data-id="kills_0"]');
+      AL.Game.state.stats.kills += 100; });
+    await page.waitForTimeout(800);
+    const live = await page.evaluate(() => { const r = document.querySelector('.quest[data-goal="ach:kills_0"]');
+      return { state: r.querySelector('.q-state').textContent, prog: r.querySelector('.q-prog').textContent, btnSame: r.querySelector('[data-act="achClaim"]') === window.__achBtn, enabled: !window.__achBtn.disabled,
+        renders: window.__achRenders, tab: document.querySelector('[data-act="achTab"][data-id="total"]').innerText, all: getComputedStyle(document.querySelector('.q-all')).display }; });
+    assert.deepEqual([live.state, live.prog, live.btnSame, live.enabled, live.renders], ['達成', '100/100', true, true, 0], JSON.stringify(live));
+    assert.match(live.tab, /1/, '分類のタブに受け取れる件数が出ていません');
+    assert.notEqual(live.all, 'none');
+
+    // メニューを開いたまま、新しく受け取れる実績・クエストが増えるとバッジが更新される
+    await page.evaluate(() => AL.UI.show('menu'));
+    const b0 = await page.evaluate(() => ({ a: document.getElementById('badge-m-achievements').textContent, q: document.getElementById('badge-m-quests').textContent }));
+    assert.equal(b0.a, '1');
+    await page.evaluate(() => { AL.Game.state.stats.bossKills = 5; AL.Game.state.stats.maxFloorEver = 5; });
+    await page.waitForTimeout(800);
+    const b1 = await page.evaluate(() => ({ a: document.getElementById('badge-m-achievements').textContent, q: document.getElementById('badge-m-quests').textContent,
+      wantA: AL.Achievements.claimableEntries(AL.Game.state).length, wantQ: AL.Quests.claimable(AL.Game.state).filter((x) => x.kind !== 'ach').length }));
+    assert.equal(b1.a, String(b1.wantA));
+    assert.ok(b1.wantA >= 3, JSON.stringify(b1));   // 討伐者I・ボス討伐5・初めてボスを倒す（実績クエスト）
+    assert.equal(b1.q, String(b1.wantQ || ''));
+    assert.ok(b1.wantQ >= 1, 'メインクエスト（第5層到達）が受け取れる状態になっていません');
+    // 受け取るとバッジが減る（ナビのクエストのバッジは実績クエストを数えない）
+    await page.evaluate(() => { AL.UI.show('achievements'); });
+    await page.click('[data-act="achTab"][data-id="total"]');
+    await page.click('[data-act="achClaim"][data-id="kills_0"]');
+    await page.evaluate(() => AL.UI.show('menu'));
+    await page.waitForTimeout(600);
+    assert.equal(await page.evaluate(() => document.getElementById('badge-m-achievements').textContent), String(b1.wantA - 1));
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('実績画面・クエスト画面（320px／360px／390px）：横にはみ出さず、分類のタブと受取ボタンが画面内に収まる', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await seedSave(page, FIXTURES[0].text);
+    await boot(page);
+    await page.click('[data-title="continue"]');
+    await page.evaluate(() => { AL.UI.closeModal(); AL.Game.paused = true; });
+    for (const width of [320, 360, 390]) {
+      await page.setViewportSize({ width, height: 664 });
+      for (const scr of ['achievements', 'quests']) {
+        await page.evaluate((s) => { AL.UI.show(s); window.scrollTo(0, 0); }, scr);
+        await page.waitForTimeout(200);
+        const r = await page.evaluate(() => {
+          const W = document.documentElement.clientWidth;
+          const out = [...document.querySelectorAll('#screen .tabs button, #screen .q-act, #screen .q-state, #screen .q-all')].filter((e) => e.offsetParent)
+            .filter((e) => { const q = e.getBoundingClientRect(); return q.left < -0.5 || q.right > W + 0.5 || e.scrollWidth > e.clientWidth + 1; }).map((e) => e.className + ':' + e.textContent);
+          return { sw: document.documentElement.scrollWidth, W, out };
+        });
+        assert.ok(r.sw <= r.W, `${scr}・${width}px：横にはみ出しています`);
+        assert.deepEqual(r.out, [], `${scr}・${width}px：画面からはみ出した・欠けた表示があります`);
+        if (scr === 'achievements') await page.screenshot({ path: `${SHOTS}/phone-achievements-${width}.png` });
+      }
+    }
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
