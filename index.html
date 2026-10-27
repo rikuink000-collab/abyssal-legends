@@ -558,7 +558,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.4.0',
+    GAME_VERSION: '1.5.0',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -596,10 +596,11 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     // ---- 仲間 ----
     HERO: {
       PARTY_SIZE: 5, FRONT_SLOTS: 2,
-      BASE_LEVEL_CAP: 40, LB_LEVEL_CAP: 10, MAX_LB: 5, LB_STAT: 0.12,
+      // レベル上限 = BASE_LEVEL_CAP[レア度] + 限界突破数 × LB_LEVEL_CAP + 転生強化「限界解放」
+      BASE_LEVEL_CAP: { 3: 40, 4: 50, 5: 60 }, LB_LEVEL_CAP: 10, MAX_LB: 5, LB_STAT: 0.12,
       LEVEL_LINEAR: 0.07, LEVEL_EXP: 1.03,
-      RARITY_STAT: { 3: 1.0, 4: 1.15, 5: 1.32 },
-      RARITY_GROWTH: { 3: 1.08, 4: 1.03, 5: 1.0 },
+      RARITY_STAT: { 3: 1.0, 4: 1.15, 5: 1.716 },   // ★5は 1.32 × 1.3
+      RARITY_GROWTH: { 3: 1.08, 4: 1.08, 5: 1.08 }, // 成長率は全レア度で同じ（高レベルで★3が★5を上回らないように）
       EXP_BASE: 14, EXP_GROWTH: 1.115,
       DUPE_SHARDS: { 3: 5, 4: 20, 5: 60 },          // 限界突破上限を超えた重複は欠片に変換
       SHARD_LB_COST: { 3: 10, 4: 30, 5: 90 }         // 欠片で限界突破するコスト
@@ -1424,7 +1425,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       Q('a_enh20', '装備を+20まで強化する', 'maxEnh', 20, 300),
       Q('a_lv20', '仲間をLv20にする', 'maxHeroLv', 20, 75),
       Q('a_lv40', '仲間をLv40にする', 'maxHeroLv', 40, 150),
-      Q('a_lv60', '仲間をLv60にする（限界突破が必要）', 'maxHeroLv', 60, 225),
+      Q('a_lv60', '仲間をLv60にする（★3・★4は限界突破が必要）', 'maxHeroLv', 60, 225),
       Q('a_lv90', '仲間をLv90にする（限界突破が必要）', 'maxHeroLv', 90, 300),
       Q('a_reb1', '転生を2回行う', 'rebirths', 2, 300),
       Q('a_reb5', '転生を5回行う', 'rebirths', 5, 450)
@@ -1816,9 +1817,11 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     return eff;
   };
 
+  // 無凸のレベル上限（レア度別）
+  Stats.baseLevelCap = function (rarity) { return C.HERO.BASE_LEVEL_CAP[rarity] || C.HERO.BASE_LEVEL_CAP[3]; };
   Stats.levelCap = function (state, heroId) {
-    var h = state.heroes[heroId];
-    return C.HERO.BASE_LEVEL_CAP + (h ? h.lb : 0) * C.HERO.LB_LEVEL_CAP + Stats.rebirthEff(state).levelCap;
+    var h = state.heroes[heroId], hd = D.HEROES[heroId];
+    return Stats.baseLevelCap(hd ? hd.rarity : 3) + (h ? h.lb : 0) * C.HERO.LB_LEVEL_CAP + Stats.rebirthEff(state).levelCap;
   };
 
   Stats.levelMult = function (lv, rarity) {
@@ -5647,7 +5650,8 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
           return '<button class="' + (f.sort === s[0] ? 'on' : '') + '" data-act="heroFilter" data-k="sort" data-v="' + s[0] + '">' + s[1] + '</button>'; }).join('') + '</div>' +
         '<span class="grow"></span><span class="tiny sub">欠片 ' + U.fmt(st.currency.shards) + '</span></div></div>' +
         '<div class="grid-cards">' + (ids.map(function (id) { return UI.heroCard(id); }).join('') || '<div class="dim">該当する仲間がいません</div>') + '</div>' +
-        '<div class="tiny dim mt">同じ仲間を重複して獲得すると限界突破（最大' + C.HERO.MAX_LB + '・1回ごとに能力+' + (C.HERO.LB_STAT * 100) + '%・レベル上限+' + C.HERO.LB_LEVEL_CAP + '）。上限後の重複は英雄の欠片に変換されます。</div>';
+        '<div class="tiny dim mt">同じ仲間を重複して獲得すると限界突破（最大' + C.HERO.MAX_LB + '・1回ごとに能力+' + (C.HERO.LB_STAT * 100) + '%・レベル上限+' + C.HERO.LB_LEVEL_CAP + '）。上限後の重複は英雄の欠片に変換されます。' +
+          'レベル上限（限界突破なし）：' + [3, 4, 5].map(function (r) { return '★' + r + ' Lv' + AL.Stats.baseLevelCap(r); }).join('・') + '。</div>';
     }
   });
   UI.listen(['loadout', 'gacha', 'stateReplaced'], ['heroes', 'party']);
