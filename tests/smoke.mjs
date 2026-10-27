@@ -672,8 +672,21 @@ test('既存セーブ（合成フィクスチャ）：CONTINUE で続きから�
     assert.equal(await titleNotice(page), null, '正常な既存セーブでお知らせが表示されています');
     const before = await page.evaluate(() => JSON.stringify({ h: AL.Game.state.heroes, p: AL.Game.state.party, c: AL.Game.state.currency.crystals, i: AL.Game.state.items.length }));
     await page.screenshot({ path: `${SHOTS}/phone-guide-title-continue.png` });
+    // CONTINUE の処理（UI.startGame）が終わった直後に、同じ処理の中で戦闘を止める。
+    // 止めないと、1秒ごとの自動レベルアップや戦闘の報酬で仲間・魂晶・装備が変わり、下の比較が実行のタイミングに左右される。
+    // CONTINUE でゲームが再開すること（paused が false になること）は、止める前に記録して確かめる。
+    await page.evaluate(() => {
+      const start = AL.UI.startGame;
+      AL.UI.startGame = function () {
+        const r = start.apply(this, arguments);
+        window.__resumedByContinue = AL.Game.paused === false;
+        AL.Game.paused = true;
+        return r;
+      };
+    });
     await page.click('[data-title="continue"]');
     await page.waitForTimeout(800);
+    assert.equal(await page.evaluate(() => window.__resumedByContinue), true, 'CONTINUE でゲームが再開されていません');
     const g = await guideInfo(page);
     assert.equal(g.step, 'done');
     assert.equal(g.mode, 'tower');
@@ -684,6 +697,7 @@ test('既存セーブ（合成フィクスチャ）：CONTINUE で続きから�
     assert.ok(partyOk, '既存プレイヤーが仲間タブから編成を開けません');
     const tiles = await page.evaluate(() => { AL.UI.show('menu'); return document.querySelectorAll('.menu-tile.locked').length; });
     assert.equal(tiles, 0, '既存プレイヤーに鍵付きの機能があります');
+    assert.equal(await page.evaluate(() => AL.Game.paused), true, '比較の前に戦闘が再開されています（比較がタイミングに左右されます）');
     const after = await page.evaluate(() => JSON.stringify({ h: AL.Game.state.heroes, p: AL.Game.state.party, c: AL.Game.state.currency.crystals, i: AL.Game.state.items.length }));
     assert.equal(after, before, '既存プレイヤーの仲間・編成・魂晶・装備が変わりました');
     assert.deepEqual(errors, []);
