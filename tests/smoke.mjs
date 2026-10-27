@@ -672,8 +672,21 @@ test('既存セーブ（合成フィクスチャ）：CONTINUE で続きから�
     assert.equal(await titleNotice(page), null, '正常な既存セーブでお知らせが表示されています');
     const before = await page.evaluate(() => JSON.stringify({ h: AL.Game.state.heroes, p: AL.Game.state.party, c: AL.Game.state.currency.crystals, i: AL.Game.state.items.length }));
     await page.screenshot({ path: `${SHOTS}/phone-guide-title-continue.png` });
+    // CONTINUE の処理（UI.startGame）が終わった直後に、同じ処理の中で戦闘を止める。
+    // 止めないと、1秒ごとの自動レベルアップや戦闘の報酬で仲間・魂晶・装備が変わり、下の比較が実行のタイミングに左右される。
+    // CONTINUE でゲームが再開すること（paused が false になること）は、止める前に記録して確かめる。
+    await page.evaluate(() => {
+      const start = AL.UI.startGame;
+      AL.UI.startGame = function () {
+        const r = start.apply(this, arguments);
+        window.__resumedByContinue = AL.Game.paused === false;
+        AL.Game.paused = true;
+        return r;
+      };
+    });
     await page.click('[data-title="continue"]');
     await page.waitForTimeout(800);
+    assert.equal(await page.evaluate(() => window.__resumedByContinue), true, 'CONTINUE でゲームが再開されていません');
     const g = await guideInfo(page);
     assert.equal(g.step, 'done');
     assert.equal(g.mode, 'tower');
@@ -684,6 +697,7 @@ test('既存セーブ（合成フィクスチャ）：CONTINUE で続きから�
     assert.ok(partyOk, '既存プレイヤーが仲間タブから編成を開けません');
     const tiles = await page.evaluate(() => { AL.UI.show('menu'); return document.querySelectorAll('.menu-tile.locked').length; });
     assert.equal(tiles, 0, '既存プレイヤーに鍵付きの機能があります');
+    assert.equal(await page.evaluate(() => AL.Game.paused), true, '比較の前に戦闘が再開されています（比較がタイミングに左右されます）');
     const after = await page.evaluate(() => JSON.stringify({ h: AL.Game.state.heroes, p: AL.Game.state.party, c: AL.Game.state.currency.crystals, i: AL.Game.state.items.length }));
     assert.equal(after, before, '既存プレイヤーの仲間・編成・魂晶・装備が変わりました');
     assert.deepEqual(errors, []);
@@ -1354,6 +1368,66 @@ test('通貨表示（320px・390px）：すべての通貨が見切れずに見�
 const trackedFiles = () => execFileSync('git', ['ls-files', '-z', '--cached'], { cwd: ROOT, encoding: 'utf8' }).split('\0').filter(Boolean);
 
 // _config.yml の exclude 一覧（「exclude:」直下の「- 値」だけを読む簡易パーサー）
+test('仲間の詳細・一覧（スマホ幅）：レア度別のレベル上限が表示され、上限までレベルアップでき、表示の能力値と戦闘の能力値が一致する', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await seedSave(page, FIXTURES[0].text);
+    await boot(page);
+    await page.click('[data-title="continue"]');
+    await page.waitForTimeout(500);
+    await page.evaluate(() => { AL.Game.paused = true; AL.UI.closeModal(); });
+    // 合成フィクスチャ：h01（★5）Lv40・無凸、h07（★5）Lv118・無凸（上限を超えたデータ）、h25（★3）Lv1・無凸
+    const before = await page.evaluate(() => ({ h01: AL.Game.state.heroes.h01.lv, h07: AL.Game.state.heroes.h07.lv, exp: AL.Game.state.currency.exp }));
+    assert.equal(before.h01, 40);
+    assert.equal(before.h07, 118, '上限を超えたレベルが読み込みで下がっています');
+    const detail = (id) => page.evaluate((i) => { AL.UI.heroDetail(i); const b = document.querySelector('#modal-root .modal-body'); return b ? b.textContent : ''; }, id);
+    for (const width of [320, 390]) {
+      await page.setViewportSize({ width, height: 664 });
+      const t01 = await detail('h01');
+      assert.match(t01, /Lv 40 \/ 60/, `${width}px：★5無凸の上限が Lv60 と表示されていません`);
+      assert.match(await detail('h25'), /Lv 1 \/ 40/, '★3無凸の上限が Lv40 と表示されていません');
+      assert.match(await detail('h07'), /Lv 118 \/ 60/, '上限を超えたレベルがそのまま表示されていません');
+      assert.match(await detail('h07'), /レベル上限です/);
+      const sw = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, W: innerWidth }));
+      assert.ok(sw.sw <= sw.W, `${width}px：仲間の詳細で画面が横にはみ出しています`);
+      await page.screenshot({ path: `${SHOTS}/phone-hero-detail-cap-${width}.png` });
+      await page.evaluate(() => AL.UI.closeModal());
+    }
+    // 上限まで上げる（＋1 → 最大）。経験値は上げた分だけ減る
+    await detail('h01');
+    await page.click('#modal-root [data-act="heroLv"][data-n="1"]');
+    assert.equal(await page.evaluate(() => AL.Game.state.heroes.h01.lv), 41);
+    await page.click('#modal-root [data-act="heroLv"][data-n="10000"]');
+    const after = await page.evaluate(() => ({ lv: AL.Game.state.heroes.h01.lv, exp: AL.Game.state.currency.exp }));
+    assert.equal(after.lv, 60, '★5無凸が Lv60 まで上がりません');
+    const spent = await page.evaluate(() => { let s = 0; for (let lv = 40; lv < 60; lv++) s += AL.Heroes.expToNext(lv); return s; });
+    assert.equal(before.exp - after.exp, spent, '消費した経験値が上げたレベル分と一致しません');
+    assert.match(await detail('h01'), /Lv 60 \/ 60/);
+    assert.ok(await page.evaluate(() => document.querySelector('#modal-root [data-act="heroLv"][data-n="1"]').disabled), '上限で＋1が押せます');
+    // 表示の能力値（相性込み）と、戦闘で使う能力値が一致する
+    const cmp = await page.evaluate(() => {
+      AL.UI.closeModal();
+      const st = AL.Game.state, syn = AL.Stats.synergies(st.party), specs = AL.Progress.heroSpecs(st);
+      return st.party.filter(Boolean).map((id) => {
+        const shown = AL.Stats.hero(st, id, { synergy: AL.Stats.synergyBonusFor(id, syn) }), sp = specs.find((x) => x.refId === id).stats;
+        return [id, AL.U.fmt(shown.atk) === AL.U.fmt(sp.atk) && AL.U.fmt(shown.hp) === AL.U.fmt(sp.hp)];
+      });
+    });
+    for (const [id, ok] of cmp) assert.ok(ok, `${id}：表示と戦闘の能力値が違います`);
+    // 一覧の説明にレア度別の上限が出る
+    const note = await page.evaluate(() => { AL.UI.show('heroes'); return document.getElementById('screen').textContent; });
+    assert.ok(note.includes('★3 Lv40・★4 Lv50・★5 Lv60'), '仲間一覧にレア度別のレベル上限の説明がありません');
+    // 保存して読み込み直しても、レベル・限界突破が変わらない
+    const saved = await page.evaluate(() => { AL.Game.save(); return JSON.stringify(AL.Game.state.heroes); });
+    await page.reload();
+    await page.waitForFunction(() => !document.getElementById('loading') && window.AL && AL.Game && AL.Game.state, null, { timeout: 15000 });
+    assert.equal(await page.evaluate(() => JSON.stringify(AL.Game.state.heroes)), saved);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
 function pagesExcludes() {
   const lines = readFileSync(new URL('../_config.yml', import.meta.url), 'utf8').split('\n');
   const out = [];
