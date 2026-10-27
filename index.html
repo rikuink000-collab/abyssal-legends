@@ -323,6 +323,11 @@ label.toggle:last-child { border-bottom: none; }
 .ach { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); margin-bottom: 6px; }
 .ach.done { border-color: rgba(255, 204, 77, 0.5); }
 .ach.claimed { opacity: 0.55; }
+.ach-tabs button { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; line-height: 1.2; padding: 4px 6px; flex: 1 1 0; min-width: 0; }
+.ach-tabs .at-name { font-size: 13px; white-space: nowrap; }
+.ach-tabs .at-sub { font-size: 11px; color: var(--sub); display: flex; align-items: center; gap: 4px; }
+.ach-tabs button.on .at-sub { color: #fff; }
+.ach-tabs .at-badge { position: static; display: inline-grid; }
 /* クエスト：未達成・達成（受取可）・受取済み・未解放を見分けられるようにする */
 .quest .q-state { flex: none; font-size: 11px; font-weight: 800; padding: 2px 6px; border-radius: 6px; white-space: nowrap; }
 .quest .q-state.todo { color: var(--sub); border: 1px solid var(--line2); }
@@ -553,7 +558,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.3.1',
+    GAME_VERSION: '1.4.0',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -3729,10 +3734,59 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     if (!s.done) return { ok: false, msg: '未達成です' };
     if (s.claimed) return { ok: false, msg: '受取済みです' };
     state.achievements.claimed[id] = true;
-    if (a.reward.crystals) state.currency.crystals += a.reward.crystals;
-    if (a.reward.stones) state.currency.stones += a.reward.stones;
-    if (a.reward.gold) state.currency.gold += a.reward.gold;
+    if (a.reward.crystals) state.currency.crystals = U.safe(state.currency.crystals + a.reward.crystals);
+    if (a.reward.stones) state.currency.stones = U.safe(state.currency.stones + a.reward.stones);
+    if (a.reward.gold) state.currency.gold = U.safe(state.currency.gold + a.reward.gold);
     return { ok: true, reward: a.reward };
+  };
+
+  // ---- 実績画面：実績（achievements.claimed）と実績クエスト（quests.ach.claimed）を1つの画面に並べる ----
+  // 受取記録は別々のまま。受け取りはそれぞれの既存の処理（Ach.claim・Quests.claim）に任せるため、二重に受け取る経路はない。
+  // 分類は記録の種類（stat）で決める。
+  Ach.CATEGORIES = [
+    { id: 'main', name: 'メイン実績', stats: ['maxFloorEver', 'bossKills', 'rebirths', 'dungeonClears', 'rushBest'] },
+    { id: 'grow', name: '育成実績', stats: ['maxHeroLv', 'maxEnh', 'enhances', 'maxLB', 'fullSets', 'heroesOwned', 'mythicFound'] },
+    { id: 'total', name: '累計実績', stats: ['kills', 'gachaPulls', 'idleClaims'] }
+  ];
+  Ach.categoryOf = function (stat) {
+    for (var i = 0; i < Ach.CATEGORIES.length; i++) if (Ach.CATEGORIES[i].stats.indexOf(stat) >= 0) return Ach.CATEGORIES[i].id;
+    return 'total';
+  };
+  // 表示する全項目（分類ごとに、記録の種類 → 目標値の順）。src: 'ach'＝実績／'quest'＝実績クエスト
+  var entryCache = null;
+  Ach.entries = function () {
+    if (entryCache) return entryCache;
+    var out = [];
+    D.ACHIEVEMENTS.forEach(function (a) { out.push({ src: 'ach', id: a.id, name: a.name, desc: a.desc, stat: a.stat, target: a.target, reward: a.reward, def: a }); });
+    D.QUESTS.ach.forEach(function (q) { out.push({ src: 'quest', id: q.id, name: q.name, desc: '', stat: q.stat, target: q.target, reward: q.reward, def: q }); });
+    var rank = function (e) {
+      var ci = 0, si = 0;
+      Ach.CATEGORIES.forEach(function (c, i) { var k = c.stats.indexOf(e.stat); if (k >= 0) { ci = i; si = k; } });
+      return [ci, si, e.target];
+    };
+    out.forEach(function (e, i) { e.cat = Ach.categoryOf(e.stat); e.key = e.src + ':' + e.id; e.order = i; });
+    entryCache = out.sort(function (a, b) {
+      var x = rank(a), y = rank(b);
+      return x[0] - y[0] || x[1] - y[1] || x[2] - y[2] || a.order - b.order;
+    });
+    return entryCache;
+  };
+  // {value, target, done, claimed}（どちらも同じ記録 Ach.value から進捗を取る）
+  Ach.entryStatus = function (state, e) {
+    if (e.src === 'quest') { var s = AL.Quests.status(state, 'ach', e.def); return { value: s.value, target: s.target, done: s.done, claimed: s.claimed }; }
+    var a = Ach.status(state, e.def);
+    return { value: a.value, target: e.target, done: a.done, claimed: a.claimed };
+  };
+  Ach.claimEntry = function (state, src, id, now) {
+    return src === 'quest' ? AL.Quests.claim(state, 'ach', id, now) : Ach.claim(state, id);
+  };
+  // 受け取れる項目（cat を指定するとその分類だけ）
+  Ach.claimableEntries = function (state, cat) {
+    return Ach.entries().filter(function (e) {
+      if (cat && e.cat !== cat) return false;
+      var s = Ach.entryStatus(state, e);
+      return s.done && !s.claimed;
+    });
   };
 
   // ================= ショップ =================
@@ -5153,11 +5207,12 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   };
   UI.updateBadges = function () {
     var st = UI.st(); if (!st) return;
-    var ach = AL.Guide.unlocked(st, 'achievements') ? AL.Achievements.claimable(st).length : 0;
-    var set = function (id, v) { var b = UI.$('#badge-' + id); if (b) b.textContent = v ? String(v) : ''; };
-    set('achievements', ach);
-    var qn = AL.Guide.unlocked(st, 'quests') ? AL.Quests.claimable(st).length : 0;
-    set('quests', qn);
+    // 実績：実績と実績クエストの受け取れる件数／クエスト：メイン・デイリーの受け取れる件数（同じ項目を二重に数えない）
+    var ach = AL.Guide.unlocked(st, 'achievements') ? AL.Achievements.claimableEntries(st).length : 0;
+    var set = function (id, v) { var b = UI.$('#badge-' + id); if (b && b.textContent !== (v ? String(v) : '')) b.textContent = v ? String(v) : ''; };
+    set('achievements', ach); set('m-achievements', ach);
+    var qn = AL.Guide.unlocked(st, 'quests') && UI.questClaimableCount ? UI.questClaimableCount(st) : 0;
+    set('quests', qn); set('m-quests', qn);
     set('battle', AL.Game.pendingIdle ? '!' : '');
     set('menu', ach || '');
     set('dungeon', st.currency.tickets >= AL.CONFIG.TICKETS.MAX && st.stats.maxFloorEver >= 15 && AL.Guide.unlocked(st, 'dungeon') ? '!' : '');
@@ -6085,9 +6140,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
         return '<button class="menu-tile" data-act="nav" data-id="' + id + '"><span class="ni">' + s.icon + '</span>' + s.name + '<span class="badge" id="badge-m-' + id + '"></span></button>';
       }).join('') + '</div>' +
       '<div class="panel mt"><div class="small sub">ABYSSAL LEGENDS v' + C.GAME_VERSION + '</div><div class="tiny dim">セーブデータはこの端末のブラウザ内に保存されます。機種変更やブラウザのデータ削除に備えて、設定画面からバックアップを書き出してください。</div></div>';
-      var n = AL.Achievements.claimable(UI.st()).length;
-      var b = UI.$('#badge-m-achievements'); if (b) b.textContent = n || '';
-      var qb = UI.$('#badge-m-quests'); if (qb) qb.textContent = AL.Quests.claimable(UI.st()).length || '';
+      UI.updateBadges();
     }
   });
 
@@ -6255,39 +6308,108 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   });
 
   // ===== 実績・記録 =====
+  // 実績（32件）と実績クエスト（11件）を分類ごとに表示する。受取記録はそれぞれ別のまま（AL.Achievements.claimEntry）。
+  var ACH = AL.Achievements;
+  function achCat() { var c = ui.achCat; return ACH.CATEGORIES.some(function (x) { return x.id === c; }) ? c : 'main'; }
+  function rewardText(r) { return [r.crystals ? '魂晶 ' + U.fmt(r.crystals) : '', r.stones ? '強化石 ' + U.fmt(r.stones) : '', r.gold ? 'ゴールド ' + U.fmt(r.gold) : ''].filter(Boolean).join('・'); }
+  // 分類ごとの集計：{main: {total, done, claimed, ready}, ...}
+  function achSummary(st) {
+    var out = {};
+    ACH.CATEGORIES.forEach(function (c) { out[c.id] = { total: 0, done: 0, claimed: 0, ready: 0 }; });
+    ACH.entries().forEach(function (e) {
+      var s = ACH.entryStatus(st, e), o = out[e.cat];
+      o.total++; if (s.done) o.done++; if (s.claimed) o.claimed++; if (s.done && !s.claimed) o.ready++;
+    });
+    return out;
+  }
+  function achTabHtml(c, o) {
+    // 2段目に「受取済み/全件」と、受け取れる件数のバッジ（名前に重ならないよう同じ段に置く）
+    return '<span class="at-name">' + c.name + '</span><span class="at-sub num">' + o.claimed + '/' + o.total + (o.ready ? '<span class="badge at-badge">' + o.ready + '</span>' : '') + '</span>';
+  }
+  function achAllText(n) { return 'まとめて受け取る（' + n + '件）'; }
   UI.register({
-    id: 'achievements', name: '実績', icon: '績', nav: 'more',
+    id: 'achievements', name: '実績', icon: '🏆', nav: 'more',
     render: function (el) {
-      var st = UI.st();
-      var list = D.ACHIEVEMENTS.map(function (a) { return { a: a, s: AL.Achievements.status(st, a) }; });
-      list.sort(function (x, y) { return (y.s.done && !y.s.claimed) - (x.s.done && !x.s.claimed) || x.s.claimed - y.s.claimed; });
-      var claimable = list.filter(function (x) { return x.s.done && !x.s.claimed; }).length;
+      var st = UI.st(), cat = achCat(), sum = achSummary(st), cur = sum[cat];
+      var list = ACH.entries().filter(function (e) { return e.cat === cat; });
+      var tot = { total: 0, claimed: 0, ready: 0 };
+      ACH.CATEGORIES.forEach(function (c) { tot.total += sum[c.id].total; tot.claimed += sum[c.id].claimed; tot.ready += sum[c.id].ready; });
       var recs = [['通算最高到達階層', '第' + st.stats.maxFloorEver + '層'], ['ボスラッシュ最高撃破', st.dungeons.rush.bestCount + '体'],
         ['魔晶の坑道 最高難易度', st.dungeons.mine.maxTier], ['封印の宝物殿 最高難易度', st.dungeons.vault.maxTier], ['深淵の試練 最高難易度', st.dungeons.trial.maxTier],
         ['通算撃破数', U.fmt(st.stats.kills)], ['ボス撃破数', U.fmt(st.stats.bossKills)], ['転生回数', st.rebirth.count], ['ガチャ回数', st.gacha.total], ['プレイ時間', U.fmtTime(st.playTime)]];
-      el.innerHTML = '<div class="screen-title">実績 <span class="tag">' + list.filter(function (x) { return x.s.claimed; }).length + '/' + list.length + '</span></div>' +
-        (claimable ? '<button class="btn gold block mb" data-act="achClaimAll">まとめて受け取る（' + claimable + '件）</button>' : '') +
-        list.map(function (x) {
-          var a = x.a, s = x.s, p = Math.min(1, s.value / a.target);
-          return '<div class="ach' + (s.done ? ' done' : '') + (s.claimed ? ' claimed' : '') + '"><div class="grow"><b>' + esc(a.name) + '</b><div class="tiny sub">' + esc(a.desc) + '　報酬：' + (a.reward.crystals ? '魂晶' + a.reward.crystals : '') + (a.reward.stones ? '強化石' + a.reward.stones : '') + '</div>' +
-            '<div class="bar mt"><i style="width:' + (p * 100).toFixed(1) + '%"></i></div><div class="tiny dim num">' + U.fmt(Math.min(s.value, a.target)) + ' / ' + U.fmt(a.target) + '</div></div>' +
-            (s.claimed ? '<span class="tiny good">受取済</span>' : '<button class="btn sm gold" data-act="achClaim" data-id="' + a.id + '"' + (s.done ? '' : ' disabled') + '>受取</button>') + '</div>';
+      el.innerHTML = '<div class="screen-title">実績 <span class="tag ach-total">' + tot.claimed + '/' + tot.total + '</span></div>' +
+        '<div class="notice info ach-ready"' + (tot.ready ? '' : ' style="display:none"') + '>受け取れる報酬があります（' + tot.ready + '件）</div>' +
+        '<div class="tabs ach-tabs">' + ACH.CATEGORIES.map(function (c) {
+          return '<button class="' + (c.id === cat ? 'on' : '') + '" data-act="achTab" data-id="' + c.id + '">' + achTabHtml(c, sum[c.id]) + '</button>';
+        }).join('') + '</div>' +
+        '<div class="panel ach-sum"><div class="row between"><b>' + ACH.CATEGORIES.filter(function (c) { return c.id === cat; })[0].name + '</b>' +
+        '<span class="tiny sub num ach-sum-t">達成 ' + cur.done + '/' + cur.total + '・受取済み ' + cur.claimed + '/' + cur.total + '</span></div>' +
+        '<div class="bar mt"><i style="width:' + (cur.total ? cur.done / cur.total * 100 : 0).toFixed(1) + '%"></i></div></div>' +
+        '<button class="btn gold block mb q-all" data-act="achClaimAll" data-cat="' + cat + '"' + (cur.ready ? '' : ' style="display:none"') + '>' + achAllText(cur.ready) + '</button>' +
+        list.map(function (e) {
+          return UI.goalRow({ keyAttr: 'goal', key: e.key, name: e.name, sub: e.desc, reward: rewardText(e.reward),
+            claimAttrs: 'data-act="achClaim" data-src="' + e.src + '" data-id="' + e.id + '"' }, ACH.entryStatus(st, e));
         }).join('') +
         '<div class="screen-title mt" style="font-size:15px">自己ベスト <span class="tag">この端末内の記録</span></div><div class="panel">' + recs.map(function (r) { return '<div class="kv"><span>' + r[0] + '</span><b>' + r[1] + '</b></div>'; }).join('') +
         '<div class="tiny dim mt">※ 他のプレイヤーと競うオンラインランキングはサーバーが必要なため未実装です。ここに表示されるのはこの端末に保存された自分の記録のみです。</div></div>';
     }
   });
-  UI.listen(['stateReplaced'], ['achievements']);
+  UI.listen(['rebirth', 'stateReplaced'], ['achievements']);
+
+  // 実績画面を開いているあいだ、進捗・状態・件数だけを書き換える（要素は作り直さない）。
+  // 受取済みの状態が変わったときだけ画面を作り直す。
+  UI.achScreenTick = function () {
+    var el = UI.$('#screen'), st = UI.st();
+    if (UI.current !== 'achievements' || !el || !st || UI.dirty) return;
+    var cat = achCat(), list = ACH.entries().filter(function (e) { return e.cat === cat; });
+    var rows = el.querySelectorAll('.quest[data-goal]'), stats = [];
+    if (rows.length !== list.length) return UI.render();
+    for (var i = 0; i < list.length; i++) {
+      var s = ACH.entryStatus(st, list[i]);
+      if (rows[i].dataset.goal !== list[i].key || s.claimed !== rows[i].classList.contains('claimed')) return UI.render();
+      stats.push(s);
+    }
+    stats.forEach(function (s, i) { UI.goalRowUpdate(rows[i], s); });
+    var sum = achSummary(st), cur = sum[cat], ready = 0;
+    ACH.CATEGORIES.forEach(function (c) { ready += sum[c.id].ready; });
+    el.querySelectorAll('.ach-tabs [data-act="achTab"]').forEach(function (b) {
+      var c = ACH.CATEGORIES.filter(function (x) { return x.id === b.dataset.id; })[0], h = c && achTabHtml(c, sum[c.id]);
+      if (c && b._h !== h) { b.innerHTML = h; b._h = h; }
+    });
+    var t = el.querySelector('.ach-sum-t'), tt = '達成 ' + cur.done + '/' + cur.total + '・受取済み ' + cur.claimed + '/' + cur.total;
+    if (t && t.textContent !== tt) t.textContent = tt;
+    var bar = el.querySelector('.ach-sum .bar i'), w = (cur.total ? cur.done / cur.total * 100 : 0).toFixed(1) + '%';
+    if (bar && parseFloat(bar.style.width) !== parseFloat(w)) bar.style.width = w;
+    var all = el.querySelector('.q-all');
+    if (all) {
+      var disp = cur.ready ? '' : 'none', txt = achAllText(cur.ready);
+      if (all.style.display !== disp) all.style.display = disp;
+      if (all.textContent !== txt) all.textContent = txt;
+    }
+    var note = el.querySelector('.ach-ready'), nt = '受け取れる報酬があります（' + ready + '件）';
+    if (note) { var nd = ready ? '' : 'none'; if (note.style.display !== nd) note.style.display = nd; if (note.textContent !== nt) note.textContent = nt; }
+  };
+
+  UI.action('achTab', function (el) { ui.achCat = el.dataset.id; UI.render(); });
+  // 受け取り：既存の処理で受け取り、受け取れたらすぐに保存する（保存は1回）
+  function afterAchClaim(n) {
+    if (n) AL.Game.save();
+    UI.render(); UI.renderCurrency(); UI.updateBadges();
+  }
   UI.action('achClaim', function (el) {
-    var r = AL.Achievements.claim(UI.st(), el.dataset.id);
-    UI.toast(r.ok ? '報酬を受け取りました' : r.msg, r.ok ? 'good' : 'bad');
-    UI.render(); UI.renderCurrency(); UI.updateBadges();
+    var r = ACH.claimEntry(UI.st(), el.dataset.src, el.dataset.id, Date.now());
+    UI.toast(r.ok ? '報酬を受け取りました（' + rewardText(r.reward) + '）' : r.msg, r.ok ? 'good' : 'bad');
+    afterAchClaim(r.ok ? 1 : 0);
   });
-  UI.action('achClaimAll', function () {
-    var st = UI.st(), n = 0;
-    AL.Achievements.claimable(st).forEach(function (a) { if (AL.Achievements.claim(st, a.id).ok) n++; });
-    UI.toast(n + '件の報酬を受け取りました', 'good');
-    UI.render(); UI.renderCurrency(); UI.updateBadges();
+  UI.action('achClaimAll', function (el) {
+    var st = UI.st(), n = 0, got = { crystals: 0, stones: 0, gold: 0 }, now = Date.now();
+    ACH.claimableEntries(st, el.dataset.cat).forEach(function (e) {
+      var r = ACH.claimEntry(st, e.src, e.id, now);
+      if (!r.ok) return;
+      n++; Object.keys(got).forEach(function (k) { got[k] += r.reward[k] || 0; });
+    });
+    UI.toast(n ? n + '件の報酬を受け取りました（' + rewardText(got) + '）' : '受け取れる報酬はありません', n ? 'good' : 'bad');
+    afterAchClaim(n);
   });
 
   // ===== ショップ =====
@@ -6453,7 +6575,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   'use strict';
   var AL = G.AL, UI = AL.UI, C = AL.CONFIG, D = AL.DATA, U = AL.U, esc = U.esc;
   var Q = AL.Quests, ui = UI.ui;
-  var TABS = [['main', 'メイン'], ['daily', 'デイリー'], ['ach', '実績']];
+  var TABS = [['main', 'メイン'], ['daily', 'デイリー']];   // 実績クエストは「実績」画面に表示する
 
   // 1件分の表示内容。状態は「未達成」「達成（受取可）」「受取済み」「未解放（メインの先のクエスト）」の4つ
   function view(s) {
@@ -6464,25 +6586,43 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       ready: s.done && !s.claimed && !s.locked
     };
   }
-  function row(kind, q, s) {
+  // 目標1件の行（クエスト画面・実績画面で共用）。o: {keyAttr, key, name, sub, reward, claimAttrs}
+  UI.goalRow = function (o, s) {
     var v = view(s);
-    var act = s.claimed ? '' : '<button class="btn sm gold q-act" data-act="questClaim" data-kind="' + kind + '" data-id="' + q.id + '"' + (v.ready ? '' : ' disabled') + '>受取</button>';
-    return '<div class="ach quest' + (v.ready ? ' done' : '') + (s.claimed ? ' claimed' : '') + (s.locked ? ' locked' : '') + '" data-quest="' + q.id + '">' +
-      '<div class="grow"><div class="row"><b class="grow">' + esc(q.name) + '</b><span class="q-state ' + v.label[0] + '">' + v.label[1] + '</span></div>' +
-      '<div class="tiny sub">報酬：魂晶 ' + q.reward.crystals + '</div>' +
+    var act = s.claimed ? '' : '<button class="btn sm gold q-act" ' + o.claimAttrs + (v.ready ? '' : ' disabled') + '>受取</button>';
+    return '<div class="ach quest' + (v.ready ? ' done' : '') + (s.claimed ? ' claimed' : '') + (s.locked ? ' locked' : '') + '" data-' + o.keyAttr + '="' + o.key + '">' +
+      '<div class="grow"><div class="row"><b class="grow">' + esc(o.name) + '</b><span class="q-state ' + v.label[0] + '">' + v.label[1] + '</span></div>' +
+      (o.sub ? '<div class="tiny sub">' + esc(o.sub) + '</div>' : '') +
+      '<div class="tiny sub">報酬：' + o.reward + '</div>' +
       '<div class="bar mt"><i style="width:' + v.width + '"></i></div><div class="tiny dim num q-prog">' + v.prog + '</div></div>' + act + '</div>';
+  };
+  // 描画済みの行の進捗・状態・受取ボタンだけを書き換える（要素は作り直さない）
+  UI.goalRowUpdate = function (r, s) {
+    var v = view(s), bar = r.querySelector('.bar i'), prog = r.querySelector('.q-prog'), lab = r.querySelector('.q-state'), btn = r.querySelector('.q-act');
+    if (bar && parseFloat(bar.style.width) !== parseFloat(v.width)) bar.style.width = v.width;
+    if (prog && prog.textContent !== v.prog) prog.textContent = v.prog;
+    if (lab && lab.textContent !== v.label[1]) { lab.className = 'q-state ' + v.label[0]; lab.textContent = v.label[1]; }
+    r.classList.toggle('done', v.ready);
+    r.classList.toggle('locked', !!s.locked);
+    if (btn && btn.disabled !== !v.ready) btn.disabled = !v.ready;
+  };
+  function row(kind, q, s) {
+    return UI.goalRow({ keyAttr: 'quest', key: q.id, name: q.name, reward: '魂晶 ' + q.reward.crystals,
+      claimAttrs: 'data-act="questClaim" data-kind="' + kind + '" data-id="' + q.id + '"' }, s);
   }
   // タブに表示するクエスト（表示順）
   function items(tab) {
-    if (tab === 'main') return D.QUESTS.main.map(function (q) { return { kind: 'main', q: q }; });
     if (tab === 'daily') return D.QUESTS.daily.map(function (q) { return { kind: 'daily', q: q }; }).concat([{ kind: 'dailyBonus', q: D.QUESTS.dailyBonus }]);
-    return D.QUESTS.ach.map(function (q) { return { kind: 'ach', q: q }; });
+    return D.QUESTS.main.map(function (q) { return { kind: 'main', q: q }; });
   }
+  function curTab() { return ui.questTab === 'daily' ? 'daily' : 'main'; }
+  // 受け取れる件数（メイン・デイリー）。実績クエストは実績画面で数える
   function counts(st) {
-    var c = { main: 0, daily: 0, ach: 0 };
-    Q.claimable(st).forEach(function (x) { c[x.kind === 'dailyBonus' ? 'daily' : x.kind]++; });
+    var c = { main: 0, daily: 0 };
+    Q.claimable(st).forEach(function (x) { if (x.kind !== 'ach') c[x.kind === 'dailyBonus' ? 'daily' : x.kind]++; });
     return c;
   }
+  UI.questClaimableCount = function (st) { var c = counts(st); return c.main + c.daily; };
   function tabText(t, n) { return t[1] + (n ? '（' + n + '）' : ''); }
   function claimAllText(n) { return 'まとめて受け取る（' + n + '件）'; }
 
@@ -6491,7 +6631,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     render: function (el) {
       var st = UI.st();
       Q.refreshDay(st, Date.now());
-      var tab = ui.questTab || 'main', c = counts(st);
+      var tab = curTab(), c = counts(st);
       var html = '<div class="screen-title">クエスト</div><div class="tabs">' + TABS.map(function (t) {
         return '<button class="' + (t[0] === tab ? 'on' : '') + '" data-act="questTab" data-id="' + t[0] + '">' + tabText(t, c[t[0]]) + '</button>';
       }).join('') + '</div>';
@@ -6501,11 +6641,11 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
         var cur = Q.mainCurrent(st), done = D.QUESTS.main.filter(function (q) { return st.quests.main.claimed[q.id]; }).length;
         html += '<div class="tiny sub mb">順番に進むクエストです。報酬を受け取ると次のクエストが始まります。（' + done + '/' + D.QUESTS.main.length + '）</div>' +
           (cur ? '' : '<div class="notice info">メインクエストをすべて達成しました。</div>');
-      } else if (tab === 'daily') {
-        html += '<div class="tiny sub mb">毎日0時（この端末の時刻）に進捗と受け取りが戻ります。今日の開始時点からの記録で数えます。</div>';
       } else {
-        html += '<div class="tiny sub mb">一度達成すると戻らない長期の目標です。（「実績」画面の実績とは別の報酬です）</div>';
+        html += '<div class="tiny sub mb">毎日0時（この端末の時刻）に進捗と受け取りが戻ります。今日の開始時点からの記録で数えます。</div>';
       }
+      // 実績クエストは実績画面へ移したので、そこへの導線を置く
+      if (AL.Guide.unlocked(st, 'achievements')) html += '<div class="row between mb"><span class="tiny sub">長期の目標（実績クエスト）は実績画面にあります</span><button class="btn sm" data-act="nav" data-id="achievements">🏆 実績を見る</button></div>';
       html += items(tab).map(function (x) { return row(x.kind, x.q, Q.status(st, x.kind, x.q)); }).join('');
       el.innerHTML = html;
     }
@@ -6519,22 +6659,14 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     var el = UI.$('#screen'), st = UI.st();
     if (UI.current !== 'quests' || !el || !st || UI.dirty) return;
     Q.refreshDay(st, Date.now());
-    var tab = ui.questTab || 'main', list = items(tab), rows = el.querySelectorAll('.quest[data-quest]'), stats = [];
+    var tab = curTab(), list = items(tab), rows = el.querySelectorAll('.quest[data-quest]'), stats = [];
     if (rows.length !== list.length) return UI.render();
     for (var i = 0; i < list.length; i++) {
       var s = Q.status(st, list[i].kind, list[i].q);
       if (rows[i].dataset.quest !== list[i].q.id || !!s.claimed !== rows[i].classList.contains('claimed')) return UI.render();
       stats.push(s);
     }
-    stats.forEach(function (s, i) {
-      var r = rows[i], v = view(s), bar = r.querySelector('.bar i'), prog = r.querySelector('.q-prog'), lab = r.querySelector('.q-state'), btn = r.querySelector('.q-act');
-      if (bar && parseFloat(bar.style.width) !== parseFloat(v.width)) bar.style.width = v.width;
-      if (prog && prog.textContent !== v.prog) prog.textContent = v.prog;
-      if (lab && lab.textContent !== v.label[1]) { lab.className = 'q-state ' + v.label[0]; lab.textContent = v.label[1]; }
-      r.classList.toggle('done', v.ready);
-      r.classList.toggle('locked', !!s.locked);
-      if (btn && btn.disabled !== !v.ready) btn.disabled = !v.ready;
-    });
+    stats.forEach(function (s, i) { UI.goalRowUpdate(rows[i], s); });
     var c = counts(st);
     el.querySelectorAll('.tabs [data-act="questTab"]').forEach(function (b) {
       var t = TABS.filter(function (x) { return x[0] === b.dataset.id; })[0], txt = t && tabText(t, c[t[0]]);
@@ -6596,8 +6728,8 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var INTRO = {
     gacha: '魂晶を使って、新しい仲間を召喚できます。',
     party: '戦う5人と並び順（前衛・後衛）を入れ替えられます。',
-    achievements: '目標を達成すると、魂晶などの報酬を受け取れます。',
-    quests: '次に進める目標（メイン）・毎日の目標（デイリー）・長期の目標（実績）を確認し、達成すると魂晶を受け取れます。',
+    achievements: '長期の目標（メイン実績・育成実績・累計実績）を確認し、達成すると魂晶などの報酬を受け取れます。',
+    quests: '次に進める目標（メイン）と毎日の目標（デイリー）を確認し、達成すると魂晶を受け取れます。',
     codex: '出会った仲間・敵・装備を確認できます。',
     shop: 'ゴールドで強化石・魂晶・挑戦券などと交換できます。',
     dungeon: '挑戦券を使って特別な戦いに挑み、強化石や装備をたくさん手に入れます。',
@@ -6794,7 +6926,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       AL.Game.frame(now);
       AL.Scene.render();
       if (now - lastTick > 120) { lastTick = now; UI.tickBattle(); }
-      if (now - lastSlow > 500) { lastSlow = now; UI.renderCurrency(); UI.updateBadges(); UI.guideTick(); UI.questTick(); UI.questScreenTick(); }
+      if (now - lastSlow > 500) { lastSlow = now; UI.renderCurrency(); UI.updateBadges(); UI.guideTick(); UI.questTick(); UI.questScreenTick(); UI.achScreenTick(); }
       errCount = 0;
     } catch (e) {
       errCount++;

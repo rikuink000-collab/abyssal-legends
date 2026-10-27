@@ -57,6 +57,9 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
   - 進捗は既存の記録（`state.stats` など）から計算し、保存するのは受け取り済みの ID とデイリーの開始時点の記録だけ。
   - 報酬の付与と受け取り済みの記録は同じ処理で行う。クエストの ID は削除・改名しない（受け取り記録が消え、再び受け取れてしまう）。
   - デイリーはショップと同じ端末の日付（`U.dateKey`）で切り替え、時刻を過去に戻しても戻さない。変えるときは `tests/quests.test.mjs` も確認する。
+- **実績画面は、実績（`state.achievements.claimed`）と実績クエスト（`state.quests.ach.claimed`）を一緒に表示する。**（`AL.Achievements.entries`・`claimEntry`）
+  - 受取記録は統合せず、それぞれ別の保存先のまま。受け取りは既存の処理（`Achievements.claim`・`Quests.claim`）を呼ぶだけにし、同じ報酬を受け取れる新しい経路を作らない。
+  - 分類（メイン・育成・累計）は記録の種類（stat）で決める（`Achievements.CATEGORIES`）。変えるときは `tests/achievements.test.mjs` も確認する。
 
 ## リポジトリと公開のルール
 
@@ -88,6 +91,8 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
   導入と関係のない画面のテストは、`startAsVeteran`（導入を終えた状態で開始）を使う。
 - `tests/quests.test.mjs`：クエストの進捗・魂晶の量・二重受け取りの防止（再読み込みを含む）・日付の変更・既存セーブとの互換性を確認する。
   クエスト画面の操作は `tests/smoke.mjs` で確認する。
+- `tests/achievements.test.mjs`：実績画面の項目（実績32件・実績クエスト11件）と分類、既存の受取記録の反映、一度だけ受け取れること（再読み込みを含む）を確認する。
+  実績画面の操作（受け取り直後の保存・表示の更新・バッジ）は `tests/smoke.mjs` で確認する。
 - `tests/save-recovery.test.mjs`：架空の localStorage（テストごとに新しく作り、書き込み失敗などを仕込める）で、
   読み込み失敗時の復元、退避キーの衝突、退避の失敗と保護状態、バックアップの扱いを確認する。
   `tests/load-core.mjs` が index.html のゲームロジックを Node.js に読み込む（index.html は変更しない）。
