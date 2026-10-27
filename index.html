@@ -195,6 +195,9 @@ label.toggle:last-child { border-bottom: none; }
 .pc .pc-lv { font-size: 10px; color: var(--sub); }
 .pc .bar { height: 6px; margin-top: 2px; }
 .pc .pc-hp { font-size: 10px; color: var(--sub); text-align: right; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.pc .pc-hp span { display: inline-block; white-space: nowrap; }
+/* 幅360px以下：5人のカードが並ぶと狭いため、顔の絵と Lv の文字を少し小さくして、3桁の Lv もカード内に収める */
+@media (max-width: 360px) { .pc .pc-top img { width: 24px; height: 24px; } .pc .pc-lv { font-size: 9px; } }
 .pc .sts { display: flex; gap: 2px; flex-wrap: wrap; min-height: 14px; margin-top: 2px; }
 .st { font-size: 9px; line-height: 13px; padding: 0 2px; border-radius: 3px; color: #0a0810; font-weight: 800; }
 .st.debuff { outline: 1px solid #000; }
@@ -550,7 +553,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.2.2',
+    GAME_VERSION: '1.3.1',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -5130,14 +5133,19 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     });
   };
 
+  UI.NAV_ORDER = ['battle', 'heroes', 'quests', 'equip', 'gacha', 'menu'];
+  function navRank(id) { var i = UI.NAV_ORDER.indexOf(id); return i >= 0 ? i : 100 + UI.order.indexOf(id); }
   UI.renderNav = function () {
     var nav = UI.$('#nav');
     if (!nav) return;
-    var html = '';
-    UI.order.forEach(function (id) {
+    var html = '', cur = UI.screens[UI.current] || {};
+    // 下部ナビの並び（UI.NAV_ORDER）→ 残りは登録順（「その他」の中の機能。広い画面では上部に並ぶ）
+    var ids = UI.order.slice().sort(function (a, b) { return navRank(a) - navRank(b); });
+    ids.forEach(function (id) {
       var s = UI.screens[id];
       if (!s.nav || !AL.Guide.unlocked(UI.st(), id)) return;
-      var cls = 'nav-item' + (UI.current === id || (id === 'menu' && UI.screens[UI.current].nav === 'more') ? ' active' : '') + (s.nav === 'more' ? ' more-only' : '') + (id === 'menu' ? ' menu-btn' : '');
+      var on = UI.current === id || cur.parent === id || (id === 'menu' && cur.nav === 'more');
+      var cls = 'nav-item' + (on ? ' active' : '') + (s.nav === 'more' ? ' more-only' : '') + (id === 'menu' ? ' menu-btn' : '');
       html += '<button class="' + cls + '" data-act="nav" data-id="' + id + '"><span class="ni">' + s.icon + '</span><span>' + s.name + '</span><span class="badge" id="badge-' + id + '"></span></button>';
     });
     nav.innerHTML = html;
@@ -5151,7 +5159,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     var qn = AL.Guide.unlocked(st, 'quests') ? AL.Quests.claimable(st).length : 0;
     set('quests', qn);
     set('battle', AL.Game.pendingIdle ? '!' : '');
-    set('menu', (ach + qn) || '');
+    set('menu', ach || '');
     set('dungeon', st.currency.tickets >= AL.CONFIG.TICKETS.MAX && st.stats.maxFloorEver >= 15 && AL.Guide.unlocked(st, 'dungeon') ? '!' : '');
   };
 
@@ -5390,7 +5398,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
         return '<div class="pc" data-act="heroDetail" data-id="' + u.refId + '" id="pc-' + u.uid + '"><div class="pc-top">' + UI.heroImg(u.refId, 32) +
           '<div style="min-width:0"><div class="pc-lv">Lv' + st.heroes[u.refId].lv + '</div><span class="tagx" style="background:' + D.ROLES[hd.role].color + '">' + D.ROLES[hd.role].short + '</span></div></div>' +
           '<div class="pc-name">' + esc(U.shortName(hd.name)) + '</div>' +
-          '<div class="bar hp"><i></i></div><div class="pc-hp"></div><div class="bar cd"><i></i></div><div class="sts"></div></div>';
+          '<div class="bar hp"><i></i></div><div class="pc-hp"><span class="hp-cur"></span><span class="hp-max"></span></div><div class="bar cd"><i></i></div><div class="sts"></div></div>';
       }).join('');
     }
     b.allies.forEach(function (u) {
@@ -5400,7 +5408,10 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       var hb = el.querySelector('.bar.hp');
       hb.className = 'bar hp' + (r < 0.25 ? ' low' : (r < 0.5 ? ' mid' : ''));
       hb.firstChild.style.width = (r * 100).toFixed(1) + '%';
-      el.querySelector('.pc-hp').textContent = U.fmt(u.hp) + '/' + U.fmt(u.maxHp);
+      // 現在値と「/最大値」は別々の要素。カードが狭いときは、その間で2行に折り返す（数値は省略しない）
+      var hc = el.querySelector('.hp-cur'), hm = el.querySelector('.hp-max'), hct = U.fmt(u.hp), hmt = '/' + U.fmt(u.maxHp);
+      if (hc.textContent !== hct) hc.textContent = hct;
+      if (hm.textContent !== hmt) hm.textContent = hmt;
       var cdb = el.querySelector('.bar.cd'), cdr = u.skill ? 1 - Math.min(1, u.cd / Math.max(0.01, u.skill.cd * (1 - u.cdr))) : 0;
       cdb.className = 'bar cd' + (cdr >= 1 ? ' ready' : '');
       cdb.firstChild.style.width = (cdr * 100).toFixed(0) + '%';
@@ -5438,7 +5449,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
 
   // ===== 戦闘詳細画面 =====
   UI.register({
-    id: 'battle', name: 'バトル', icon: '⚔', nav: 'main',
+    id: 'battle', name: 'バトル', icon: '⚔️', nav: 'main',
     render: function (el) {
       var st = UI.st(), t = st.tower;
       var syn = AL.Stats.synergies(st.party);
@@ -5558,13 +5569,21 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var ui = UI.ui;
   ui.heroFilter = ui.heroFilter || { role: '', element: '', sort: 'power' };
 
+  // 仲間タブの上部の切り替え。編成は導入を終えるまで鍵付き（画面 ID は heroes・party のまま）
+  UI.heroTabs = function (cur) {
+    var ok = AL.Guide.unlocked(UI.st(), 'party');
+    return '<div class="tabs hero-tabs"><button class="' + (cur === 'heroes' ? 'on' : '') + '" data-act="nav" data-id="heroes">仲間一覧</button>' +
+      '<button class="' + (cur === 'party' ? 'on' : '') + '" data-act="nav" data-id="party"' + (ok ? '' : ' disabled') + '>' + (ok ? '' : '🔒 ') + '編成</button></div>' +
+      (ok ? '' : '<div class="tiny dim mb">編成：' + esc(UI.lockText('party')) + '</div>');
+  };
+
   // ===== 仲間一覧 =====
   UI.register({
-    id: 'heroes', name: '仲間', icon: '仲', nav: 'main',
+    id: 'heroes', name: '仲間', icon: '👥', nav: 'main',
     render: function (el) {
       var st = UI.st(), f = ui.heroFilter;
       var ids = AL.Heroes.sortedIds(st, f.sort, { role: f.role, element: f.element });
-      el.innerHTML = '<div class="screen-title">仲間 <span class="tag">' + Object.keys(st.heroes).length + ' / ' + D.HERO_LIST.length + '人</span></div>' +
+      el.innerHTML = UI.heroTabs('heroes') + '<div class="screen-title">仲間 <span class="tag">' + Object.keys(st.heroes).length + ' / ' + D.HERO_LIST.length + '人</span></div>' +
         '<div class="panel"><div class="chips"><button class="chip' + (!f.role ? ' on' : '') + '" data-act="heroFilter" data-k="role" data-v="">全役割</button>' +
         D.ROLE_ORDER.map(function (r) { return '<button class="chip' + (f.role === r ? ' on' : '') + '" data-act="heroFilter" data-k="role" data-v="' + r + '">' + D.ROLES[r].name + '</button>'; }).join('') + '</div>' +
         '<div class="chips mt"><button class="chip' + (!f.element ? ' on' : '') + '" data-act="heroFilter" data-k="element" data-v="">全属性</button>' +
@@ -5678,7 +5697,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
 
   // ===== パーティー編成 =====
   UI.register({
-    id: 'party', name: '編成', icon: '陣', nav: 'main',
+    id: 'party', name: '編成', icon: '陣', parent: 'heroes',
     render: function (el) {
       var st = UI.st(), sel = ui.partySel == null ? -1 : ui.partySel;
       var syn = AL.Stats.synergies(st.party);
@@ -5688,7 +5707,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
           (id ? UI.heroImg(id, 48) + '<div class="nm">' + esc(U.shortName(D.HEROES[id].name)) + '</div><div class="tiny">' + UI.elemTag(D.HEROES[id].element) + ' Lv' + st.heroes[id].lv + '</div>' : '<div class="dim" style="padding-top:28px">空き</div>') + '</div>';
       }).join('');
       var list = AL.Heroes.sortedIds(st, 'power').map(function (id) { return UI.heroCard(id, { act: 'partyPick' }); }).join('');
-      el.innerHTML = '<div class="screen-title">パーティー編成 <span class="tag">総戦力 ' + U.fmt(AL.Stats.partyPower(st)) + '</span></div>' +
+      el.innerHTML = UI.heroTabs('party') + '<div class="screen-title">パーティー編成 <span class="tag">総戦力 ' + U.fmt(AL.Stats.partyPower(st)) + '</span></div>' +
         '<div class="panel"><div class="pslots">' + slots + '</div>' +
         '<div class="tiny sub mt">' + (sel >= 0 ? '<b class="gold">' + (sel + 1) + '番の枠を選択中</b>：下の一覧から配置する仲間をタップ（編成中の仲間は入れ替え）' : '枠をタップして選択 → 仲間をタップで配置。前衛（1〜2番）は敵に狙われやすくなります。') + '</div>' +
         '<div class="btn-group mt"><button class="btn primary" data-act="autoParty">おまかせ編成</button>' + (sel >= 0 && st.party[sel] ? '<button class="btn danger" data-act="partyRemove" data-slot="' + sel + '">この枠を外す</button>' : '') + '</div>' +
@@ -5746,7 +5765,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   }
 
   UI.register({
-    id: 'equip', name: '装備', icon: '装', nav: 'main',
+    id: 'equip', name: '装備', icon: '⚒️', nav: 'main',
     render: function (el) {
       var st = UI.st(), hid = curHero(st), hd = D.HEROES[hid], h = st.heroes[hid];
       var eqMap = AL.Inv.equippedSet(st), items = AL.Stats.itemMap(st);
@@ -5939,7 +5958,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var ui = UI.ui;
 
   UI.register({
-    id: 'gacha', name: 'ガチャ', icon: '召', nav: 'main',
+    id: 'gacha', name: 'ガチャ', icon: '🎰', nav: 'main',
     render: function (el) {
       var st = UI.st(), banners = AL.Gacha.banners();
       if (!ui.banner || !banners.some(function (b) { return b.id === ui.banner; })) ui.banner = banners[banners.length - 1].id;
@@ -6057,7 +6076,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
 
   // ===== メニュー（スマートフォン用） =====
   UI.register({
-    id: 'menu', name: 'その他', icon: '≡', nav: 'main',
+    id: 'menu', name: 'その他', icon: '☰', nav: 'main',
     render: function (el) {
       var tiles = ['quests', 'dungeon', 'rebirth', 'codex', 'achievements', 'shop', 'settings'];
       el.innerHTML = '<div class="screen-title">メニュー</div><div class="menu-grid">' + tiles.map(function (id) {
@@ -6468,7 +6487,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   function claimAllText(n) { return 'まとめて受け取る（' + n + '件）'; }
 
   UI.register({
-    id: 'quests', name: 'クエスト', icon: '任', nav: 'more',
+    id: 'quests', name: 'クエスト', icon: '📜', nav: 'main',
     render: function (el) {
       var st = UI.st();
       Q.refreshDay(st, Date.now());
@@ -6738,11 +6757,15 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     Guide.markSeen(st, show);
     UI.renderNav();
     UI.modal({ id: 'guideUnlock', title: '新しい機能が解放されました',
-      html: show.map(function (id) { var sc = UI.screens[id]; return '<div class="syn on"><b>' + sc.icon + '　' + esc(sc.name) + '</b><div class="small">' + esc(INTRO[id]) + '</div></div>'; }).join('') +
-        (show.length > 1 || UI.screens[show[0]].nav === 'more' ? '<div class="tiny sub mt">「その他」メニューから開けます。</div>' : ''),
+      html: show.map(function (id) { var sc = UI.screens[id]; return '<div class="syn on"><b>' + sc.icon + '　' + esc(sc.name) + '</b>　<span class="tiny sub">' + whereIs(sc) + '</span><div class="small">' + esc(INTRO[id]) + '</div></div>'; }).join(''),
       buttons: [{ label: 'OK', cls: 'primary' }] });
     AL.Game.save();
   };
+  // 解放した機能の開き方（下部のタブ／仲間タブの中／その他メニュー）
+  function whereIs(sc) {
+    if (sc.parent) return '「' + UI.screens[sc.parent].name + '」タブ上部の「' + sc.name + '」から';
+    return sc.nav === 'more' ? '「その他」メニューから' : '下のタブから';
+  }
   UI.afterStateReplaced = function () {
     var st = UI.st();
     UI.closeModal('guideSummon'); UI.closeModal('guideBattle');
