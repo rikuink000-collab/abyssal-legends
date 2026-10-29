@@ -31,6 +31,6 @@
 <!-- マージ後に確認すること。実データ・個人情報はここにも書かない -->
 
 - [ ] Pages の公開処理（pages build and deployment）が成功
-- [ ] 公開されたファイルが `index.html`・`README.md`（と自動生成の `assets/css/style.css`）だけ
+- [ ] 公開されたファイルが `index.html`・`README.md`・`og-image.png`（と自動生成の `assets/css/style.css`）だけ
 - [ ] スマホで公開ページを開き、設定画面のバージョン表示が新しくなっている
 - [ ] 既存のセーブが引き継がれている

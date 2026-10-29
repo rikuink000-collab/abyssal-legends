@@ -23,7 +23,7 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
 8. **ユーザーが「公開して」と明示したときだけマージする。** テスト済みのコミットが PR の最新であることを確かめてからマージする。
 9. **マージ後、Pages の公開結果を確認する。**
    - `pages build and deployment` の build・deploy が成功していること。
-   - build ログの公開ファイル一覧が `index.html`・`README.md`・`assets/css/style.css` だけであること。
+   - build ログの公開ファイル一覧が `index.html`・`README.md`・`og-image.png`・`assets/css/style.css` だけであること。
    - Claude Code のクラウド環境からは公開URL（`github.io`）に接続できないことがあるため、その場合はスマホでの確認
      （設定画面のバージョン表示・既存セーブの引き継ぎ）をユーザーに依頼する。
 
@@ -69,7 +69,7 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
 - **実データや個人情報を、コミット・PR の説明・コメントに含めない。** 実際のセーブ書き出しファイル、
   そこから抽出・加工したデータ、メールアドレスなどの個人情報が対象。リポジトリは公開されている。
 - テストのためだけにゲーム本体（`index.html`）を変更しない。
-- **公開サイトに出すのはゲーム本体と README だけにする。** Pages は `main` を Jekyll で公開するため、
+- **公開サイトに出すのはゲーム本体と README、共有用のリンクカード画像 `og-image.png`（1200×630。`index.html` の OGP・X Card が参照）だけにする。** Pages は `main` を Jekyll で公開するため、
   開発・テスト用のファイルを追加したら `_config.yml` の `exclude` にも追加する
   （`.` や `_` で始まるファイル・ディレクトリはもともと公開されない）。`npm test` がこれを自動で確認する。
 
@@ -80,7 +80,7 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
   - 保存キーと移行処理の整合性
   - セーブの保存・再読み込み・書き出しファイルの読み込み
   - 合成セーブ `tests/fixtures/save-v3.json` の重要データ（通貨・階層・仲間・装備・転生・実績など）が読み込み後に失われないこと
-  - GitHub Pages の公開対象が `index.html` と `README.md` だけであること（`_config.yml` の `exclude` を検証）
+  - GitHub Pages の公開対象が `index.html`・`README.md`・`og-image.png` だけであること（`_config.yml` の `exclude` を検証）
   - リポジトリ内のテスト用セーブが合成データ（`_fixture: "synthetic..."`）であり、
     実際のセーブ書き出しファイルが含まれていないこと
 - 変更に合わせて追加するテスト
@@ -96,6 +96,11 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
 - `tests/balance.test.mjs`：仲間のレア度別の基礎倍率・成長率・レベル上限（★3 Lv40・★4 Lv50・★5 Lv60、限界突破1回ごとに +10）、
   能力値の計算式、レベルアップと経験値の消費、スキルの待機時間と弱体の反映、既存セーブのレベル・限界突破の維持を確認する。
   仲間の詳細画面の上限表示・レベルアップは `tests/smoke.mjs` で確認する。`AL.CONFIG.HERO` を変えるときは、このテストも意図して更新する。
+- `tests/equip-bulk.test.mjs`：装備の一括売却（通常・セット装備。装備中・ロック中は売らない）・装備中を一括ロック・未装備を一括ロック解除の、
+  内訳（`Inv.bulkSellPreview`・`Inv.lockEquippedPreview`・`Inv.unlockFreePreview`）と実行時の確かめ直し、二重実行・対象0件の扱いを確認する。
+  装備中の判定は編成に関係なく所持しているすべての仲間で行う。確認ダイアログ・キャンセル・装備タップで強化画面を開く操作は `tests/smoke.mjs` で確認する。
+- `tests/ogp.test.mjs`：共有時のリンクカード（OGP・X Card）のメタタグが1つずつあること、画像 `og-image.png`（1200×630）の URL・存在・公開対象を確認する。
+  X での実際の表示はテストでは確かめられないため、公開後に確認する。
 - `tests/save-recovery.test.mjs`：架空の localStorage（テストごとに新しく作り、書き込み失敗などを仕込める）で、
   読み込み失敗時の復元、退避キーの衝突、退避の失敗と保護状態、バックアップの扱いを確認する。
   `tests/load-core.mjs` が index.html のゲームロジックを Node.js に読み込む（index.html は変更しない）。
