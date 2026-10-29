@@ -429,7 +429,7 @@ test('ダンジョン終了後：バトル画面で見ていればダンジョ�
   }
 });
 
-test('一括売却：レジェンド・ミシックまで選べ、装備中・ロック中・セット・選んだより上のレアリティは売らない', async () => {
+test('一括売却：レジェンド・ミシックまで選べ、セット装備も売り、装備中・ロック中・選んだより上のレアリティは売らない（確認に内訳）', async () => {
   const { context, page, errors } = await openPhone();
   try {
     await boot(page);
@@ -445,22 +445,30 @@ test('一括売却：レジェンド・ミシックまで選べ、装備中・�
       const equipped = mk(5); s.heroes[s.party[0]].equip.weapon = equipped.uid;
       const locked = mk(5, { locked: true });
       const set = mk(4, { set: D.SET_ORDER[0] });
-      const gold = free.filter((it) => it.rarity <= 4).reduce((a, it) => a + Inv.sellValue(it), 0);
-      return { gold0: s.currency.gold, gold4: gold, keep: [free[5].uid, equipped.uid, locked.uid, set.uid], sold4: free.filter((it) => it.rarity <= 4).map((it) => it.uid) };
+      const lockedSet = mk(3, { set: D.SET_ORDER[0], locked: true });
+      const sold = free.filter((it) => it.rarity <= 4).concat([set]);
+      const gold = sold.reduce((a, it) => a + Inv.sellValue(it), 0);
+      return { gold0: s.currency.gold, gold4: gold, keep: [free[5].uid, equipped.uid, locked.uid, lockedSet.uid], sold4: sold.map((it) => it.uid) };
     });
     await page.evaluate(() => AL.UI.show('equip'));
     await page.click('[data-act="bulkSell"]');
     const opts = await page.$$eval('[data-act="bulkSellDo"]', (bs) => bs.map((b) => ({ r: +b.dataset.r, text: b.textContent, disabled: b.disabled })));
     assert.deepEqual(opts.map((o) => o.r), [0, 1, 2, 3, 4, 5], '選択肢がコモン〜ミシックの6つになっていません');
-    assert.match(opts[4].text, /レジェンド以下\s*5個/);
-    assert.match(opts[5].text, /ミシック以下\s*6個/);
+    assert.match(opts[4].text, /レジェンド以下\s*6個（セット1）/);
+    assert.match(opts[5].text, /ミシック以下\s*7個（セット1）/);
     assert.match(opts[4].text, new RegExp('\\+' + (await page.evaluate((g) => AL.U.fmt(g), setup.gold4)) + 'G'));
     await page.screenshot({ path: `${SHOTS}/phone-bulk-sell.png` });
 
-    // レジェンド以下を売却：確認に警告が出て、売却額どおりにゴールドが増える
+    // レジェンド以下を売却：確認に内訳（通常・セット・獲得予定・売却しない装備）と警告が出て、売却額どおりにゴールドが増える
     await page.click('[data-act="bulkSellDo"][data-r="4"]');
     const confirmText = await page.textContent('#modal-root .backdrop:last-child .modal-body');
-    assert.match(confirmText, /レジェンド以上の装備 1個/);
+    assert.match(confirmText, /売却する装備\s*6個/);
+    assert.match(confirmText, /通常装備\s*5個/);
+    assert.match(confirmText, /セット装備\s*1個/);
+    assert.match(confirmText, new RegExp('獲得予定\\s*\\+' + (await page.evaluate((g) => AL.U.fmt(g), setup.gold4)) + 'G'));
+    assert.match(confirmText, /売却しない装備\s*1個（装備中 0・ロック中 1）/);
+    assert.match(confirmText, /レジェンド以上の装備 2個/);
+    await page.screenshot({ path: `${SHOTS}/phone-bulk-sell-confirm.png` });
     await page.click('#modal-root .backdrop:last-child [data-mbtn="1"]');
     const after = await page.evaluate((eq) => ({ gold: AL.Game.state.currency.gold, uids: AL.Game.state.items.map((it) => it.uid),
       equipped: AL.Inv.equippedBy(AL.Game.state, eq) }), setup.keep[1]);
@@ -469,6 +477,204 @@ test('一括売却：レジェンド・ミシックまで選べ、装備中・�
     for (const u of setup.keep) assert.ok(after.uids.includes(u), `${u}（売ってはいけない装備）が売却されました`);
     assert.ok(after.equipped, '装備中の装備が外れました');
     await page.evaluate(() => { AL.Game.paused = false; });
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+// 装備の一括操作・強化画面への移動のテスト用：戦闘を止め、編成中の仲間と編成外の仲間に装備させた架空の所持品を作る
+async function setupEquipItems(page) {
+  return page.evaluate(() => {
+    const s = AL.Game.state, D = AL.DATA, Inv = AL.Inv;
+    AL.Game.paused = true;
+    s.settings.autoSell = -1;
+    s.items = [];
+    Object.keys(s.heroes).forEach((h) => D.SLOTS.forEach((sl) => { s.heroes[h].equip[sl] = null; }));
+    const baseOf = (slot) => D.EQUIP_BASE_LIST.find((b) => b.slot === slot).id;
+    const mk = (rarity, slot, extra) => { const it = Inv.generate({ ilvl: 30, rarity, base: baseOf(slot) }); it.set = null; Object.assign(it, extra || {}); s.items.push(it); return it; };
+    // 編成外の仲間（架空：h30 を所持させ、編成には入れない）。装備中の判定は編成に関係なく全員で行う
+    if (!Object.keys(s.heroes).some((h) => !s.party.includes(h))) s.heroes.h30 = AL.State.newHero();
+    const SET = D.SET_ORDER[0], p0 = s.party[0], other = Object.keys(s.heroes).find((h) => !s.party.includes(h));
+    const I = {
+      eqWeapon: mk(3, 'weapon'),                                   // p0 が装備（同名の未装備 twinWeapon がある）
+      twinWeapon: null,
+      eqSet: mk(4, 'head', { set: SET, locked: true }),            // p0 が装備・ロック済みのセット装備
+      eqOther: mk(2, 'body'),                                      // 編成外の仲間が装備
+      freeLocked: mk(2, 'arms', { locked: true }),
+      freeLockedSet: mk(3, 'legs', { set: SET, locked: true }),
+      free: mk(1, 'acc')
+    };
+    I.twinWeapon = mk(3, 'weapon'); I.twinWeapon.base = I.eqWeapon.base; I.twinWeapon.main = JSON.parse(JSON.stringify(I.eqWeapon.main));
+    s.heroes[p0].equip.weapon = I.eqWeapon.uid;
+    s.heroes[p0].equip.head = I.eqSet.uid;
+    if (other) s.heroes[other].equip.body = I.eqOther.uid;
+    AL.Stats.invalidate();
+    AL.UI.closeModal();
+    AL.UI.show('equip');
+    return { p0, other, uid: Object.fromEntries(Object.entries(I).map(([k, v]) => [k, v.uid])), names: [AL.Inv.name(I.eqWeapon), AL.Inv.name(I.twinWeapon)] };
+  });
+}
+// 状態（所持品・装備・通貨）と、保存されているセーブ
+const equipState = (page) => page.evaluate((k) => JSON.stringify({ items: AL.Game.state.items, heroes: AL.Game.state.heroes, cur: AL.Game.state.currency, save: localStorage.getItem(k) }), SAVE_KEY);
+const topModalText = (page) => page.textContent('#modal-root .backdrop:last-child .modal-body');
+// 要素が画面の横幅に収まり、互いに重ならないか
+async function boxesFit(page, selector) {
+  return page.evaluate((sel) => {
+    const W = innerWidth, rs = [...document.querySelectorAll(sel)].map((e) => e.getBoundingClientRect());
+    const out = rs.filter((r) => r.left < -0.5 || r.right > W + 0.5 || r.width < 1).length;
+    let overlap = 0;
+    for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) {
+      const a = rs[i], b = rs[j];
+      if (a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5) overlap++;
+    }
+    return { n: rs.length, out, overlap, sw: document.documentElement.scrollWidth, W };
+  }, selector);
+}
+
+test('装備の一括ロック・ロック解除（360px・390px）：全員の装備中をロック、未装備のロックを解除し、確認に内訳、キャンセルでは何も変わらない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await startAsVeteran(page);
+    const set = await setupEquipItems(page);
+    assert.ok(set.other, '編成外の仲間がいません（テストの前提）');
+    await page.evaluate(() => AL.Game.save());
+    for (const width of [360, 390]) {
+      await page.setViewportSize({ width, height: 700 });
+      await page.evaluate(() => AL.UI.render());
+      const fit = await boxesFit(page, '#screen .bulk-lock .btn, #screen [data-act="bulkSell"]');
+      assert.equal(fit.n, 3);
+      assert.equal(fit.out, 0, `${width}px：一括操作のボタンが画面からはみ出しています`);
+      assert.equal(fit.overlap, 0, `${width}px：一括操作のボタンが重なっています`);
+      assert.ok(fit.sw <= fit.W, `${width}px：装備画面が横にはみ出しています`);
+    }
+    await page.evaluate(() => document.querySelector('#screen .bulk-lock').scrollIntoView({ block: 'center' }));
+    await page.screenshot({ path: `${SHOTS}/phone-equip-bulk-buttons.png` });
+    const s0 = await equipState(page);
+
+    // 装備中を一括ロック：確認に内訳 → キャンセルでは何も変わらない
+    await page.click('[data-act="bulkLockEquipped"]');
+    let t = await topModalText(page);
+    assert.match(t, /ロックする装備\s*2個/);
+    assert.match(t, /通常装備\s*2個/);
+    assert.match(t, /セット装備\s*0個/);
+    assert.match(t, /ロック済み（変更なし）\s*1個/);
+    const dlg = await boxesFit(page, '#modal-root .backdrop:last-child .modal-foot .btn');
+    assert.equal(dlg.n, 2); assert.equal(dlg.out, 0, '確認ダイアログのボタンがはみ出しています'); assert.equal(dlg.overlap, 0);
+    await page.screenshot({ path: `${SHOTS}/phone-equip-bulk-lock-confirm.png` });
+    await page.click('#modal-root .backdrop:last-child [data-mbtn="0"]');
+    assert.equal(await equipState(page), s0, 'キャンセルしたのに状態またはセーブが変わりました');
+    // 実行：編成外の仲間の装備もロックされ、未装備は変わらない
+    await page.click('[data-act="bulkLockEquipped"]');
+    await page.click('#modal-root .backdrop:last-child [data-mbtn="1"]');
+    const lk = await page.evaluate((u) => Object.fromEntries(Object.entries(u).map(([k, v]) => [k, AL.Inv.find(AL.Game.state, v).locked])), set.uid);
+    assert.deepEqual(lk, { eqWeapon: true, twinWeapon: false, eqSet: true, eqOther: true, freeLocked: true, freeLockedSet: true, free: false });
+    // 対象0件：確認を出さずに知らせるだけ
+    const s1 = await equipState(page);
+    await page.click('[data-act="bulkLockEquipped"]');
+    assert.equal(await page.evaluate(() => AL.UI.modals.length), 0, '対象0件で確認が表示されました');
+    assert.equal(await equipState(page), s1);
+
+    // 未装備を一括ロック解除：確認に内訳 → キャンセルでは何も変わらない → 実行しても装備中は解除しない
+    await page.click('[data-act="bulkUnlockFree"]');
+    t = await topModalText(page);
+    assert.match(t, /ロック解除する装備\s*2個/);
+    assert.match(t, /通常装備\s*1個/);
+    assert.match(t, /セット装備\s*1個/);
+    assert.match(t, /装備中のため対象外\s*3個/);
+    await page.screenshot({ path: `${SHOTS}/phone-equip-bulk-unlock-confirm.png` });
+    await page.click('#modal-root .backdrop:last-child [data-mbtn="0"]');
+    assert.equal(await equipState(page), s1, 'キャンセルしたのに状態またはセーブが変わりました');
+    await page.click('[data-act="bulkUnlockFree"]');
+    await page.click('#modal-root .backdrop:last-child [data-mbtn="1"]');
+    const ul = await page.evaluate((u) => Object.fromEntries(Object.entries(u).map(([k, v]) => [k, AL.Inv.find(AL.Game.state, v).locked])), set.uid);
+    assert.deepEqual(ul, { eqWeapon: true, twinWeapon: false, eqSet: true, eqOther: true, freeLocked: false, freeLockedSet: false, free: false });
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('一括売却（確認のキャンセル・二重押し）：キャンセルでは装備・ゴールド・セーブが変わらず、実行ボタンを2回押しても1回分だけ売れる', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await startAsVeteran(page);
+    await setupEquipItems(page);
+    await page.evaluate(() => AL.Game.save());
+    const s0 = await equipState(page);
+    await page.click('[data-act="bulkSell"]');
+    await page.click('[data-act="bulkSellDo"][data-r="5"]');
+    assert.match(await topModalText(page), /売却する装備\s*2個/);
+    await page.click('#modal-root .backdrop:last-child [data-mbtn="0"]');
+    await page.evaluate(() => AL.UI.closeModal());
+    assert.equal(await equipState(page), s0, 'キャンセルしたのに状態またはセーブが変わりました');
+    // 二重押し：同じ確認の実行ボタンを続けて2回押す
+    await page.click('[data-act="bulkSell"]');
+    await page.click('[data-act="bulkSellDo"][data-r="5"]');
+    const r = await page.evaluate(() => {
+      const st = AL.Game.state, g0 = st.currency.gold, n0 = st.items.length;
+      const want = AL.Inv.bulkSellPreview(st, 5).gold;
+      const b = document.querySelector('#modal-root .backdrop:last-child [data-mbtn="1"]');
+      b.click(); b.click();
+      return { gained: st.currency.gold - g0, want, sold: n0 - st.items.length };
+    });
+    assert.equal(r.sold, 2);
+    assert.equal(r.gained, r.want, '獲得ゴールドが獲得予定と一致しません（二重に売れた可能性）');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('装備中のアイテムをタップすると、その装備（内部ID）の詳細・強化が開く（装備画面・仲間の詳細。同名装備・ロック中・戻る操作）', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await startAsVeteran(page);
+    const set = await setupEquipItems(page);
+    assert.equal(set.names[0], set.names[1], '同名の装備が用意できていません（テストの前提）');
+    await page.evaluate(() => { const c = AL.Game.state.currency; c.gold = 1e12; c.stones = 1e9; });
+    for (const width of [360, 390]) {
+      await page.setViewportSize({ width, height: 700 });
+      await page.evaluate(() => { AL.UI.closeModal(); AL.UI.render(); });
+      // 装備画面：装備している武器のスロット → その武器（同名の未装備ではない）
+      const before = await equipState(page);
+      await page.click(`#screen .slot[data-uid="${set.uid.eqWeapon}"]`);
+      assert.equal(await page.evaluate(() => AL.UI.topModal('item') && AL.UI.topModal('item').uid), set.uid.eqWeapon, `${width}px：別の装備が開きました`);
+      assert.ok((await topModalText(page)).includes('が装備中'));
+      assert.equal(await equipState(page), before, '開いただけで資源・装備が変わりました');
+      await page.evaluate(() => AL.UI.closeModal());
+      // ロック中のセット装備も開け、強化できる（売却はできない：既存の仕様）
+      await page.click(`#screen .slot[data-uid="${set.uid.eqSet}"]`);
+      assert.equal(await page.evaluate(() => AL.UI.topModal('item').uid), set.uid.eqSet);
+      assert.equal(await page.evaluate(() => document.querySelector('#modal-root [data-act="itemSell"]').disabled), true, 'ロック中・装備中なのに売却できます');
+      const enh0 = await page.evaluate((u) => AL.Inv.find(AL.Game.state, u).enh, set.uid.eqSet);
+      await page.click('#modal-root [data-act="itemEnh"][data-n="1"]');
+      assert.equal(await page.evaluate((u) => AL.Inv.find(AL.Game.state, u).enh, set.uid.eqSet), enh0 + 1, '強化できません');
+      assert.equal(await page.evaluate((u) => AL.Inv.find(AL.Game.state, u).enh, set.uid.twinWeapon), 0, '別の装備が強化されました');
+      const fit = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, W: innerWidth }));
+      assert.ok(fit.sw <= fit.W, `${width}px：横にはみ出しています`);
+      await page.screenshot({ path: `${SHOTS}/phone-equip-slot-detail-${width}.png` });
+      await page.evaluate(() => AL.UI.closeModal());
+    }
+    // 空きスロットはこれまでどおり部位で絞り込む
+    await page.click('#screen .slot[data-act="equipSlot"][data-slot="legs"]');
+    assert.equal(await page.evaluate(() => AL.UI.ui.equipSlot), 'legs');
+    assert.equal(await page.evaluate(() => AL.UI.modals.length), 0);
+    // 仲間の詳細：装備しているスロット → その装備の詳細が上に開き、閉じると仲間の詳細に戻る
+    await page.evaluate((h) => { AL.UI.ui.equipHero = ''; AL.UI.heroDetail(h); }, set.p0);
+    await page.click(`#modal-root .slot[data-uid="${set.uid.eqWeapon}"]`);
+    assert.deepEqual(await page.evaluate(() => AL.UI.modals.map((m) => m.id)), ['hero', 'item']);
+    assert.equal(await page.evaluate(() => AL.UI.topModal('item').uid), set.uid.eqWeapon);
+    assert.ok((await topModalText(page)).includes('外す'), 'この仲間を基準にした操作になっていません');
+    await page.click('#modal-root .backdrop:last-child [data-mclose]');
+    assert.deepEqual(await page.evaluate(() => AL.UI.modals.map((m) => m.id)), ['hero'], '閉じたあと仲間の詳細に戻りません');
+    // 空きスロット・「装備画面へ」は装備画面を開く
+    await page.click('#modal-root [data-act="gotoEquip"]:not([data-slot])');
+    assert.equal(await page.evaluate(() => AL.UI.current), 'equip');
+    assert.equal(await page.evaluate(() => AL.UI.modals.length), 0);
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
@@ -1454,9 +1660,9 @@ function isPublished(path, excludes) {
   });
 }
 
-test('GitHub Pages の公開対象が index.html と README.md だけである', () => {
+test('GitHub Pages の公開対象が index.html・README.md・og-image.png（共有時のリンクカード画像）だけである', () => {
   const published = trackedFiles().filter((f) => isPublished(f, pagesExcludes())).sort();
-  assert.deepEqual(published, ['README.md', 'index.html'],
+  assert.deepEqual(published, ['README.md', 'index.html', 'og-image.png'],
     '公開サイトに開発用のファイルが出ます。公開しないファイルは _config.yml の exclude に追加してください');
 });
 

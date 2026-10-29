@@ -7,6 +7,23 @@
 <meta name="description" content="ABYSSAL LEGENDS - ダークファンタジー放置ハクスラRPG">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>ABYSSAL LEGENDS</title>
+<!-- X などで共有したときのリンクカード（OGP・X Card）。画像は公開サイト直下の og-image.png（1200×630） -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ABYSSAL LEGENDS">
+<meta property="og:locale" content="ja_JP">
+<meta property="og:url" content="https://rikuink000-collab.github.io/abyssal-legends/">
+<meta property="og:title" content="ABYSSAL LEGENDS｜ダークファンタジー・ブラウザRPG">
+<meta property="og:description" content="仲間を集め、育成し、強敵に挑め。深淵の塔を攻略するダークファンタジーの放置系ブラウザRPG。">
+<meta property="og:image" content="https://rikuink000-collab.github.io/abyssal-legends/og-image.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="ABYSSAL LEGENDS のタイトルと、ゲームに登場する仲間とボスのドット絵">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="ABYSSAL LEGENDS｜ダークファンタジー・ブラウザRPG">
+<meta name="twitter:description" content="仲間を集め、育成し、強敵に挑め。深淵の塔を攻略するダークファンタジーの放置系ブラウザRPG。">
+<meta name="twitter:image" content="https://rikuink000-collab.github.io/abyssal-legends/og-image.png">
+<meta name="twitter:image:alt" content="ABYSSAL LEGENDS のタイトルと、ゲームに登場する仲間とボスのドット絵">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230a0912'/%3E%3Cpath d='M8 1 L14 8 L8 15 L2 8Z' fill='%238b6cff'/%3E%3Cpath d='M8 4 L11 8 L8 12 L5 8Z' fill='%23ff7ad8'/%3E%3C/svg%3E">
 <style>
 /* ABYSSAL LEGENDS - スタイル（スマートフォン優先・PCでは2カラム） */
@@ -558,7 +575,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.5.0',
+    GAME_VERSION: '1.6.0',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -2628,6 +2645,69 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     state.currency.stones += stones;
     touch(state);
     return { count: list.length, gold: gold, stones: stones };
+  };
+
+  // ---- 一括操作：画面ではまず内訳（preview）を数えて確認を出し、実行時に1つずつ条件を確かめ直す ----
+  // 装備中かどうかは、編成に関係なく所持しているすべての仲間の装備（Inv.equippedSet）で判定する。
+  // 一括売却の内訳：レアリティ maxRarity 以下の装備のうち、売却できるもの（通常・セットとも）と、売却しない理由ごとの数
+  Inv.bulkSellPreview = function (state, maxRarity) {
+    var eq = Inv.equippedSet(state), out = { list: [], normal: 0, set: 0, gold: 0, stones: 0, equipped: 0, locked: 0 };
+    state.items.forEach(function (it) {
+      if (it.rarity > maxRarity) return;
+      if (eq[it.uid]) { out.equipped++; return; }
+      if (it.locked) { out.locked++; return; }
+      out.list.push(it);
+      if (it.set) out.set++; else out.normal++;
+      out.gold += Inv.sellValue(it); out.stones += Inv.sellStones(it);
+    });
+    return out;
+  };
+  // 装備中を一括ロック：だれかが装備している、ロックしていない装備が対象（already＝装備中でロック済み）
+  Inv.lockEquippedPreview = function (state) {
+    var eq = Inv.equippedSet(state), out = { list: [], normal: 0, set: 0, already: 0 };
+    state.items.forEach(function (it) {
+      if (!eq[it.uid]) return;
+      if (it.locked) { out.already++; return; }
+      out.list.push(it);
+      if (it.set) out.set++; else out.normal++;
+    });
+    return out;
+  };
+  // uids を渡すと、その中で今も対象のものだけをロックする（確認中に装備が変わった場合に備える）
+  Inv.lockEquipped = function (state, uids) {
+    var eq = Inv.equippedSet(state), res = { count: 0, normal: 0, set: 0 };
+    state.items.forEach(function (it) {
+      if (uids && uids.indexOf(it.uid) < 0) return;
+      if (!eq[it.uid] || it.locked) return;
+      it.locked = true;
+      res.count++;
+      if (it.set) res.set++; else res.normal++;
+    });
+    if (res.count) touch(state);
+    return res;
+  };
+  // 未装備を一括ロック解除：だれも装備していない、ロック中の装備が対象（equipped＝ロック中だが装備中のため対象外）
+  Inv.unlockFreePreview = function (state) {
+    var eq = Inv.equippedSet(state), out = { list: [], normal: 0, set: 0, equipped: 0 };
+    state.items.forEach(function (it) {
+      if (!it.locked) return;
+      if (eq[it.uid]) { out.equipped++; return; }
+      out.list.push(it);
+      if (it.set) out.set++; else out.normal++;
+    });
+    return out;
+  };
+  Inv.unlockFree = function (state, uids) {
+    var eq = Inv.equippedSet(state), res = { count: 0, normal: 0, set: 0 };
+    state.items.forEach(function (it) {
+      if (uids && uids.indexOf(it.uid) < 0) return;
+      if (!it.locked || eq[it.uid]) return;
+      it.locked = false;
+      res.count++;
+      if (it.set) res.set++; else res.normal++;
+    });
+    if (res.count) touch(state);
+    return res;
   };
 
   Inv.toggleLock = function (state, uid) {
@@ -5673,7 +5753,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     var eqMap = AL.Stats.itemMap(st);
     var slotHtml = D.SLOTS.map(function (sl) {
       var it = eqMap[h.equip[sl]];
-      return '<div class="slot' + (it ? ' filled' : '') + '" data-act="gotoEquip" data-id="' + id + '" data-slot="' + sl + '">' + (it ? UI.itemImg(it) : '') +
+      return '<div class="slot' + (it ? ' filled' : '') + '" ' + (it ? 'data-act="heroItem" data-id="' + id + '" data-uid="' + it.uid + '"' : 'data-act="gotoEquip" data-id="' + id + '" data-slot="' + sl + '"') + '>' + (it ? UI.itemImg(it) : '') +
         '<div style="min-width:0"><div class="sl">' + D.SLOT_NAMES[sl] + '</div><div class="nm ellipsis" style="color:' + (it ? UI.rarityColor(it.rarity) : 'var(--dim)') + '">' + (it ? esc(AL.Inv.name(it)) + (it.enh ? ' +' + it.enh : '') : '未装備') + '</div></div></div>';
     }).join('');
     var setsHtml = s.sets.map(function (si) {
@@ -5703,7 +5783,8 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       '<div class="panel"><h3>限界突破 <span class="tiny sub">欠片 ' + U.fmt(st.currency.shards) + '</span></h3>' +
       (h.lb >= C.HERO.MAX_LB ? '<div class="small good">限界突破は最大です</div>' :
         '<button class="btn" data-act="heroLb" data-id="' + id + '"' + (st.currency.shards >= lbCost ? '' : ' disabled') + '>欠片' + lbCost + '個で限界突破</button>') + '</div>' +
-      '<div class="panel"><div class="row between"><h3 style="margin:0">装備</h3><button class="btn sm" data-act="autoEquipHero" data-id="' + id + '">最適装備</button></div><div class="slots mt">' + slotHtml + '</div></div>' +
+      '<div class="panel"><div class="row between"><h3 style="margin:0">装備</h3><div class="btn-group"><button class="btn sm" data-act="gotoEquip" data-id="' + id + '">装備画面へ</button><button class="btn sm" data-act="autoEquipHero" data-id="' + id + '">最適装備</button></div></div>' +
+        '<div class="slots mt">' + slotHtml + '</div><div class="tiny dim mt">装備をタップすると強化できます。</div></div>' +
       // 編成の変更は、編成が解放されてから（はじめての冒険の途中は表示しない）
       (!AL.Guide.unlocked(st, 'party') ? '' : '<div class="panel"><h3>編成</h3><div class="btn-group">' + [0, 1, 2, 3, 4].map(function (i) {
         var cur = st.party[i];
@@ -5749,6 +5830,8 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     UI.toast(n ? n + '部位の装備を更新しました' : 'より良い装備はありません', n ? 'good' : '');
     refreshHeroModal(); UI.refresh();
   });
+  // 仲間の詳細から装備の詳細（強化）を開く。この仲間を基準に比較・装備するため、装備画面の選択中の仲間もこの仲間にする
+  UI.action('heroItem', function (el) { ui.equipHero = el.dataset.id; UI.itemDetail(el.dataset.uid); });
   UI.action('gotoEquip', function (el) {
     ui.equipHero = el.dataset.id; ui.equipSlot = el.dataset.slot || ''; ui.invPage = 1;
     UI.closeModal('hero'); UI.show('equip');
@@ -5839,7 +5922,8 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
           return '<option value="' + id + '"' + (id === hid ? ' selected' : '') + '>' + esc(D.HEROES[id].name) + '</option>'; }).join('') + '</select>' : '') + '</div>';
       var slots = D.SLOTS.map(function (sl) {
         var it = items[h.equip[sl]];
-        return '<div class="slot' + (it ? ' filled' : '') + (slot === sl ? ' active' : '') + '" data-act="equipSlot" data-slot="' + sl + '">' + (it ? UI.itemImg(it) : '') +
+        // 装備しているスロットは、その装備（内部ID）の詳細・強化を開く。空きスロットは部位で絞り込む
+        return '<div class="slot' + (it ? ' filled' : '') + (slot === sl ? ' active' : '') + '" ' + (it ? 'data-act="itemDetail" data-uid="' + it.uid + '"' : 'data-act="equipSlot" data-slot="' + sl + '"') + '>' + (it ? UI.itemImg(it) : '') +
           '<div style="min-width:0"><div class="sl">' + D.SLOT_NAMES[sl] + '</div><div class="nm ellipsis" style="color:' + (it ? UI.rarityColor(it.rarity) : 'var(--dim)') + '">' + (it ? esc(AL.Inv.name(it)) + (it.enh ? ' +' + it.enh : '') : '未装備') + '</div></div></div>';
       }).join('');
       var sets = s.sets.map(function (si) {
@@ -5873,7 +5957,8 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
         '<select data-change="invSort">' + [['rarity', 'レア順'], ['score', 'おすすめ順'], ['ilvl', '装備Lv順'], ['slot', '部位順'], ['newest', '新しい順']].map(function (o) { return '<option value="' + o[0] + '"' + (f.sort === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' +
         '<select data-change="invShow">' + [['all', 'すべて'], ['free', '未装備のみ'], ['locked', 'ロック中のみ']].map(function (o) { return '<option value="' + o[0] + '"' + (f.show === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' +
         '<button class="chip' + (f.set ? ' on' : '') + '" data-act="invSetOnly">セットのみ</button></div>' +
-        '<div class="btn-group mt"><button class="btn sm danger" data-act="bulkSell">一括売却</button><span class="tiny sub" style="align-self:center">自動売却：' + (st.settings.autoSell >= 0 ? D.EQUIP_RARITY[st.settings.autoSell].name + '以下' : 'OFF') + '（設定で変更）</span></div></div>' +
+        '<div class="btn-group mt"><button class="btn sm danger" data-act="bulkSell">一括売却</button><span class="tiny sub" style="align-self:center">自動売却：' + (st.settings.autoSell >= 0 ? D.EQUIP_RARITY[st.settings.autoSell].name + '以下' : 'OFF') + '（設定で変更）</span></div>' +
+        '<div class="btn-group mt bulk-lock"><button class="btn sm" data-act="bulkLockEquipped">🔒 装備中を一括ロック</button><button class="btn sm" data-act="bulkUnlockFree">未装備を一括ロック解除</button></div></div>' +
         '<div class="list">' + (shown.map(function (it) { return UI.itemRow(it, { eqMap: eqMap }); }).join('') || '<div class="dim panel">該当する装備がありません</div>') + '</div>' +
         (list.length > shown.length ? '<button class="btn block more-btn" data-act="invMore">さらに表示（残り' + (list.length - shown.length) + '）</button>' : '');
     }
@@ -5903,21 +5988,67 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
 
   UI.action('bulkSell', function () {
     var st = UI.st();
-    var html = '<div class="small">未装備・未ロックの装備をレアリティで指定して売却します。</div><div class="list mt">' +
+    var html = '<div class="small">未装備・未ロックの装備（通常装備・セット装備）を、レアリティを指定して売却します。</div><div class="list mt">' +
       D.EQUIP_RARITY.map(function (rd, r) {
-        var l = AL.Inv.sellableList(st, r, false), g = 0;
-        l.forEach(function (it) { g += AL.Inv.sellValue(it); });
-        return '<button class="btn block" data-act="bulkSellDo" data-r="' + r + '"' + (l.length ? '' : ' disabled') + '><span style="color:' + D.EQUIP_RARITY[r].color + '">' + D.EQUIP_RARITY[r].name + '以下</span>　' + l.length + '個<span class="cost">+' + U.fmt(g) + 'G</span></button>';
-      }).join('') + '</div><div class="tiny dim mt">セット装備は一括売却の対象外です（個別に売却できます）。</div>';
+        var p = AL.Inv.bulkSellPreview(st, r);
+        return '<button class="btn block" data-act="bulkSellDo" data-r="' + r + '"' + (p.list.length ? '' : ' disabled') + '><span style="color:' + D.EQUIP_RARITY[r].color + '">' + D.EQUIP_RARITY[r].name + '以下</span>　' + p.list.length + '個' +
+          (p.set ? '<span class="tiny">（セット' + p.set + '）</span>' : '') + '<span class="cost">+' + U.fmt(p.gold) + 'G</span></button>';
+      }).join('') + '</div><div class="tiny dim mt">装備中・ロック中の装備は売却しません。残したい装備は先にロックしてください。</div>';
     UI.modal({ id: 'bulk', title: '一括売却', html: html });
   });
+  // 確認ダイアログの内訳（行の配列）
+  function bulkRows(rows) {
+    return '<div class="panel mt bulk-sum">' + rows.map(function (r) { return '<div class="kv"><span>' + r[0] + '</span><b' + (r[2] ? ' class="' + r[2] + '"' : '') + '>' + r[1] + '</b></div>'; }).join('') + '</div>';
+  }
   UI.action('bulkSellDo', function (el) {
     var r = +el.dataset.r, st = UI.st();
-    var l = AL.Inv.sellableList(st, r, false), uids = l.map(function (it) { return it.uid; });
-    var hi = l.filter(function (it) { return it.rarity >= 4; }).length;
-    UI.confirm({ title: '一括売却の確認', html: D.EQUIP_RARITY[r].name + '以下の装備 <b>' + l.length + '個</b> を売却します。よろしいですか？' +
-      (hi ? '<div class="notice danger mt">レジェンド以上の装備 <b>' + hi + '個</b> が含まれます。売却すると元に戻せません。</div>' : ''), ok: '売却する', danger: true,
-      onOk: function () { var res = AL.Inv.sellBulk(st, r, false, uids); UI.closeModal('bulk'); UI.toast(res.count + '個売却：+' + U.fmt(res.gold) + 'G' + (res.stones ? ' 強化石+' + res.stones : ''), 'good'); UI.renderCurrency(); } });
+    var p = AL.Inv.bulkSellPreview(st, r), uids = p.list.map(function (it) { return it.uid; });
+    if (!p.list.length) { UI.toast('売却できる装備がありません', 'bad'); return; }
+    var hi = p.list.filter(function (it) { return it.rarity >= 4; }).length, done = false;
+    UI.confirm({ title: '一括売却の確認', ok: '売却する', danger: true,
+      html: D.EQUIP_RARITY[r].name + '以下の装備を売却します。よろしいですか？' +
+        bulkRows([['売却する装備', p.list.length + '個'], ['　通常装備', p.normal + '個'], ['　セット装備', p.set + '個'],
+          ['獲得予定', '+' + U.fmt(p.gold) + 'G' + (p.stones ? '・強化石+' + U.fmt(p.stones) : ''), 'gold'],
+          ['売却しない装備', (p.equipped + p.locked) + '個（装備中 ' + p.equipped + '・ロック中 ' + p.locked + '）', 'sub']]) +
+        (hi ? '<div class="notice danger mt">レジェンド以上の装備 <b>' + hi + '個</b> が含まれます。売却すると元に戻せません。</div>' : ''),
+      onOk: function () {
+        if (done) return;
+        done = true;
+        // 確認中に装備・ロックが変わった装備は売らない（Inv.sellBulk が実行時に確かめ直す）
+        var res = AL.Inv.sellBulk(st, r, true, uids);
+        UI.closeModal('bulk');
+        UI.toast(res.count ? res.count + '個売却：+' + U.fmt(res.gold) + 'G' + (res.stones ? ' 強化石+' + res.stones : '') : '売却できる装備がありませんでした', res.count ? 'good' : 'bad');
+        UI.renderCurrency();
+      } });
+  });
+  UI.action('bulkLockEquipped', function () {
+    var st = UI.st(), p = AL.Inv.lockEquippedPreview(st), uids = p.list.map(function (it) { return it.uid; }), done = false;
+    if (!p.list.length) { UI.toast(p.already ? '装備中の装備はすべてロック済みです' : '装備中の装備がありません'); return; }
+    UI.confirm({ title: '装備中を一括ロック', ok: 'ロックする',
+      html: '仲間が装備している装備をロックします（すべての仲間が対象）。ロックした装備は、売却・一括売却・転生で失われません。' +
+        bulkRows([['ロックする装備', p.list.length + '個'], ['　通常装備', p.normal + '個'], ['　セット装備', p.set + '個'], ['ロック済み（変更なし）', p.already + '個', 'sub']]),
+      onOk: function () {
+        if (done) return;
+        done = true;
+        var res = AL.Inv.lockEquipped(st, uids);
+        UI.toast(res.count ? res.count + '個をロックしました' : 'ロックする装備はありませんでした', res.count ? 'good' : '');
+        UI.render();
+      } });
+  });
+  UI.action('bulkUnlockFree', function () {
+    var st = UI.st(), p = AL.Inv.unlockFreePreview(st), uids = p.list.map(function (it) { return it.uid; }), done = false;
+    if (!p.list.length) { UI.toast(p.equipped ? 'ロック中の装備はすべて装備中です' : 'ロック中の未装備の装備はありません'); return; }
+    UI.confirm({ title: '未装備を一括ロック解除', ok: 'ロック解除', danger: true,
+      html: 'どの仲間も装備していない装備のロックを解除します。解除した装備は、売却・一括売却・転生で失われる対象になります。' +
+        bulkRows([['ロック解除する装備', p.list.length + '個'], ['　通常装備', p.normal + '個'], ['　セット装備', p.set + '個'], ['装備中のため対象外', p.equipped + '個', 'sub']]),
+      onOk: function () {
+        if (done) return;
+        done = true;
+        // 確認中に装備した装備は解除しない（Inv.unlockFree が実行時に確かめ直す）
+        var res = AL.Inv.unlockFree(st, uids);
+        UI.toast(res.count ? res.count + '個のロックを解除しました' : 'ロックを解除する装備はありませんでした', res.count ? 'good' : '');
+        UI.render();
+      } });
   });
 
   // ===== 装備の詳細・比較 =====
