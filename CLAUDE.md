@@ -73,6 +73,25 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
   開発・テスト用のファイルを追加したら `_config.yml` の `exclude` にも追加する
   （`.` や `_` で始まるファイル・ディレクトリはもともと公開されない）。`npm test` がこれを自動で確認する。
 
+## 戦闘演出（pixelfx）のルール
+
+- 戦闘画面の演出（通常ヒット・クリティカル・撃破・回復・報酬）は、外部ライブラリ pixelfx（https://github.com/patch-gg/pixelfx、MIT）を
+  `index.html` の `js/gfx/pixelfx.js` 区画に内蔵して使う。ファイルは増やさない（ゲーム本体は `index.html` の1ファイルのまま）。
+  - `js/gfx/pixelfx.js` は **手で編集しない**。`git clone --depth 1 https://github.com/patch-gg/pixelfx <場所> && (cd <場所> && npm ci)` のあと、
+    `node third_party/pixelfx/build.mjs <場所>` でまとめ直す（`--check` で今の区画と同じかだけを確かめられる）。使うエフェクトは
+    `third_party/pixelfx/entry.js` に書く。ライセンス（`third_party/pixelfx/LICENSE`・`NOTICE.md`）は、区画の直前の表示とあわせて残す。
+    `third_party/` は `_config.yml` の `exclude` に入れ、公開しない。ゲーム内（その他画面）と README にクレジットを入れる。
+  - 使わないもの：標準の人形（actor）を使うエフェクト（`hit-flash`・`dissolve-burn`・`holy/heal` など）、`act.js`、Patch Pixel フォント。
+  - pixelfx（外部）のコードを実行する前に、毎回りくさんに確認する。2026-11-01 の試用では、作業用フォルダ内での `npm ci`（esbuild の導入）・まとめ・計測・撮影の実行を許可された。この許可は、そのときの試用だけのもの。
+- 演出を出すのは `js/gfx/fx.js`（`AL.Fx`）だけ。**描画だけを担当し、戦闘の計算・セーブ・ゲームの乱数（`U.rng`）には触れない。**
+  同時再生は3つまで（通常ヒットは2つまで）、優先度は ボス撃破 > クリティカル > 撃破 > 回復 > 報酬 > 通常ヒット。
+  演出の品質「低」では使わない。pixelfx で例外が出たら、そのセッションだけ使わず、これまでの粒子表現に戻す（戦闘は止めない）。
+  - 重い端末への自動調整（`AL.Fx.perf`）：端末名ではなく、戦闘中（停止中・品質「低」を除く）の実際のフレーム間隔で判定する。
+    25ms 超のフレームが半分以上の区切り（60フレーム）が3回続いたら、そのセッション中は同時再生の上限を3→2（通常ヒットは2→1）に下げ、戻さない。
+    250ms 超の間隔（タブの切り替えなど）は数えない。優先度は変えない。判定の基準を変えるときは `tests/pixelfx.test.mjs` も意図して更新する。
+  合成・転送は、演出が使う範囲だけに絞っている（余白は `PAD_*`。pixelfx の `meta.size` は光の広がりを含まないため、実測で決めた）。
+  エフェクトを足す・変えるときは、`tests/smoke.mjs` の「範囲を絞った描画が全画面の描画と一致する」テストも確認する。
+
 ## テスト
 
 - `npm test`：`tests/smoke.mjs`（Playwright の Chromium、iPhone 13 相当の画面）と `tests/*.test.mjs`（Node.js）を実行する。
@@ -101,6 +120,9 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
   装備中の判定は編成に関係なく所持しているすべての仲間で行う。確認ダイアログ・キャンセル・装備タップで強化画面を開く操作は `tests/smoke.mjs` で確認する。
 - `tests/ogp.test.mjs`：共有時のリンクカード（OGP・X Card）のメタタグが1つずつあること、画像 `og-image.png`（1200×630）の URL・存在・公開対象を確認する。
   X での実際の表示はテストでは確かめられないため、公開後に確認する。
+- `tests/pixelfx.test.mjs`：pixelfx の区画のライセンス表示・形（`import`・`export` や外部通信がないこと、大きさの予算）、区画の順序、
+  アダプターの優先度・同時再生の上限、重い端末への自動調整の判定（境界の値・戻さないこと・数えない場面・上限2での押しのけ）、`third_party/` の公開除外、クレジットを確認する。演出が実際に出ること・同時再生・描画の一致・
+  例外時の退避・実際の戦闘での動作は `tests/smoke.mjs`（「戦闘演出（pixelfx）」）で確認する。見た目は `test-results/phone-fx-*.png` を目で確認する。
 - `tests/save-recovery.test.mjs`：架空の localStorage（テストごとに新しく作り、書き込み失敗などを仕込める）で、
   読み込み失敗時の復元、退避キーの衝突、退避の失敗と保護状態、バックアップの扱いを確認する。
   `tests/load-core.mjs` が index.html のゲームロジックを Node.js に読み込む（index.html は変更しない）。
