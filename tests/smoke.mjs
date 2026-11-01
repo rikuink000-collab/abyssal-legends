@@ -1634,6 +1634,194 @@ test('仲間の詳細・一覧（スマホ幅）：レア度別のレベル上�
   }
 });
 
+// ===== 戦闘演出（pixelfx）：画面の Canvas に重ねる演出。戦闘の計算・セーブには触れない =====
+// 戦闘を止め、画面に出ているユニットで、決めたイベントを同期的に流して consume する（描画の合間に別のフレームが入らないように1回の evaluate で行う）
+async function fxSetup(page) {
+  await startAsVeteran(page);
+  // 画面に敵と味方が出てから、戦闘を止める
+  await page.waitForFunction(() => { const b = AL.Game.runner.battle; return b.enemies.some((e) => e.alive && AL.Scene.vs[e.uid]) && b.allies.some((a) => AL.Scene.vs[a.uid]); }, null, { timeout: 15000 });
+  await page.evaluate(() => { AL.Game.paused = true; AL.UI.closeModal(); AL.UI.show('battle'); });
+}
+const FX_HELPERS = `
+  window.__fx = {
+    run(evs, opts) {
+      const F = AL.Fx, bt = AL.Game.runner.battle, nowS = performance.now() / 1000;
+      AL.Scene.consume(bt);                                     // 直前までのイベントを読み捨てる
+      F.clear(); AL.Scene.rewardQueue = [];
+      if (opts && opts.stale) AL.Scene.lastConsumeAt = nowS - 5;
+      const en = bt.enemies.find((e) => AL.Scene.vs[e.uid]), al = bt.allies.filter((a) => AL.Scene.vs[a.uid]);
+      evs(bt, en, al).forEach((e) => (e.t === 'drop' ? AL.Events.emit('drop', e.d) : e.t === 'kill' ? AL.Events.emit('kill', {}) : bt.emit(e)));
+      AL.Scene.consume(bt);
+      return F.active.map((a) => a.kind).sort();
+    }
+  };`;
+
+test('戦闘演出（pixelfx）：5場面の演出が出て、通常ヒットは同時2つまで・全体は3つまで、優先度の高いものが残る（スマホ幅）', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await fxSetup(page);
+    await page.evaluate(FX_HELPERS);
+    const run = (src, opts) => page.evaluate(([s, o]) => window.__fx.run(eval('(' + s + ')'), o), [src, opts]);   // src は (bt, en, al) => イベントの配列
+    assert.equal(await page.evaluate(() => AL.Fx.available() && !!AL.PixelFX), true, 'pixelfx が使えません');
+    // 場面ごとの演出：通常ヒット・クリティカル・撃破・回復・報酬
+    assert.deepEqual(await run('(bt, en) => [{ t: "dmg", uid: en.uid, amount: 5, crit: false, em: 1 }]'), ['hit'], '敵への通常ヒット');
+    assert.deepEqual(await run('(bt, en, al) => [{ t: "dmg", uid: al[0].uid, amount: 5, crit: false, em: 1 }]'), [], '味方が受ける通常ヒットには出さない');
+    assert.deepEqual(await run('(bt, en) => [{ t: "dmg", uid: en.uid, amount: 5, crit: true, em: 1 }]'), ['crit'], 'クリティカル');
+    assert.deepEqual(await run('(bt, en, al) => [{ t: "dmg", uid: al[0].uid, amount: 5, crit: true, em: 1 }]'), ['crit'], '味方が受けるクリティカル');
+    assert.equal(await page.evaluate(() => AL.Fx.active[0].fx.options.flip), true, '味方側のクリティカルは左向き（反転）');
+    assert.deepEqual(await run('(bt, en) => [{ t: "dmg", uid: en.uid, amount: 5, crit: true, dot: "burn", em: 1 }]'), [], '継続ダメージには出さない');
+    assert.deepEqual(await run('(bt, en) => [{ t: "death", uid: en.uid, boss: false, side: "enemy" }]'), ['death'], '敵の撃破');
+    assert.deepEqual(await run('(bt, en, al) => [{ t: "death", uid: al[0].uid, boss: false, side: "ally" }]'), [], '味方の撃破には出さない');
+    assert.deepEqual(await run('(bt, en) => { en.isBoss = true; return [{ t: "death", uid: en.uid, boss: true, side: "enemy" }]; }'), ['boss', 'reward'], 'ボス撃破：撃破と報酬');
+    await page.evaluate(() => { const b = AL.Game.runner.battle; b.enemies.forEach((e) => { e.isBoss = false; }); });
+    assert.deepEqual(await run('(bt, en, al) => al.slice(0, 3).map((a) => ({ t: "heal", uid: a.uid, src: al[0].uid, amount: 9 }))'), ['heal'], '全体回復は、スキル1回につき1つの輪');
+    assert.deepEqual(await run('(bt, en, al) => al.map((a) => ({ t: "heal", uid: a.uid, amount: 1, small: true }))'), [], '再生の小さな回復には出さない');
+    // 報酬：戦闘中の撃破で出た、伝説以上の装備ドロップだけ（撃破の処理の中では、drop の直後に kill が出る）
+    assert.deepEqual(await run('(bt, en) => [{ t: "drop", d: { item: { rarity: 4 }, kept: true } }, { t: "kill" }]'), ['chest'], '撃破で出た伝説のドロップ');
+    assert.deepEqual(await run('(bt, en) => [{ t: "drop", d: { item: { rarity: 5 }, kept: true } }, { t: "kill" }]'), ['chest'], '撃破で出たミシックのドロップ');
+    assert.deepEqual(await run('(bt, en) => [{ t: "drop", d: { item: { rarity: 3 }, kept: true } }, { t: "kill" }]'), [], 'エピックのドロップには出さない');
+    assert.deepEqual(await run('(bt, en) => [{ t: "drop", d: { item: { rarity: 5 }, kept: false } }]'), [], '撃破を伴わないドロップ（放置報酬の受け取り・ダンジョンの結果）には出さない');
+    assert.deepEqual(await run('(bt, en) => [{ t: "kill" }, { t: "drop", d: { item: { rarity: 5 }, kept: true } }]'), [], '撃破より後に出たドロップ（別の処理）には出さない');
+    // 同時再生の上限：通常ヒットは2つまで、全体は3つまで。優先度の高いものが低いものを押しのける
+    const flood = await run('(bt, en) => Array.from({ length: 30 }, () => ({ t: "dmg", uid: en.uid, amount: 1, crit: false, em: 1 }))');
+    assert.deepEqual(flood, ['hit', 'hit'], '通常ヒットは同時2つまで');
+    assert.deepEqual(await run('(bt, en, al) => [...Array.from({ length: 6 }, () => ({ t: "dmg", uid: en.uid, amount: 1, crit: false, em: 1 })), { t: "dmg", uid: en.uid, amount: 1, crit: true, em: 1 }, { t: "death", uid: en.uid, boss: false, side: "enemy" }]'),
+      ['crit', 'death', 'hit'], 'クリティカルと撃破が通常ヒットを押しのけ、全体は3つ');
+    const full = await run('(bt, en, al) => [{ t: "dmg", uid: en.uid, amount: 1, crit: true, em: 1 }, { t: "dmg", uid: en.uid, amount: 1, crit: true, em: 1 }, { t: "dmg", uid: en.uid, amount: 1, crit: true, em: 1 }, { t: "dmg", uid: en.uid, amount: 1, crit: false, em: 1 }, { t: "heal", uid: al[0].uid, src: al[1].uid, amount: 9 }]');
+    assert.deepEqual(full, ['crit', 'crit', 'crit'], '優先度の高いクリティカルが3つ埋めたら、通常ヒットも回復も出さない');
+    const st = await page.evaluate(() => ({ ...AL.Fx.stats, maxPlayed: 0 }));
+    assert.ok(st.refused.hit > 0 && st.evicted > 0, '出せなかった・押しのけた回数が記録されます');
+    // 「演出の品質＝低」・長い中断のあとの古いイベント・pixelfx が読めない場合は、出さない（これまでの粒子表現のまま）
+    await page.evaluate(() => { AL.Game.state.settings.effects = 'low'; });
+    assert.deepEqual(await run('(bt, en) => [{ t: "dmg", uid: en.uid, amount: 5, crit: true, em: 1 }]'), [], '品質「低」では出さない');
+    await page.evaluate(() => { AL.Game.state.settings.effects = 'high'; });
+    assert.deepEqual(await run('(bt, en) => [{ t: "dmg", uid: en.uid, amount: 5, crit: true, em: 1 }]', { stale: true }), [], '1秒以上空いたあとの古いイベントには出さない');
+    assert.deepEqual(await run('(bt, en) => [{ t: "dmg", uid: en.uid, amount: 5, crit: true, em: 1 }]'), ['crit'], '次からは出る');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('戦闘演出（pixelfx）：範囲を絞った描画が全画面の描画と一致し、戦闘の乱数・状態に触れない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await fxSetup(page);
+    const r = await page.evaluate(() => {
+      const F = AL.Fx, P = AL.PixelFX, W = 320, H = 180, U = AL.U;
+      const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const cx = cv.getContext('2d');
+      const kinds = ['hit', 'crit', 'death', 'boss', 'heal', 'reward', 'chest'];
+      let seed = 777; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+      let bad = 0, spill = 0, cases = 0;
+      for (let i = 0; i < 90; i++) {
+        F.clear(); const n = 1 + Math.floor(rnd() * 3);
+        for (let k = 0; k < n; k++) F.play(kinds[Math.floor(rnd() * kinds.length)], Math.round(rnd() * 340 - 10), Math.round(rnd() * 200 - 10), { flip: rnd() < 0.4, height: 10 + Math.round(rnd() * 30) });
+        const adv = rnd() * 1.4; F.active.forEach((a) => { for (let s = 0; s < 6; s++) a.fx.update(adv / 6); });
+        cx.clearRect(0, 0, W, H); F.draw(cx); const got = cx.getImageData(0, 0, W, H).data;
+        const ref = P.createFrame(W, H, 0, 0), out = new Uint8ClampedArray(W * H * 4);
+        F.active.forEach((a) => a.fx.draw(ref, 'back')); F.active.forEach((a) => a.fx.draw(ref, 'front')); P.composite(ref, out, null);
+        const rc = document.createElement('canvas'); rc.width = W; rc.height = H; const rx = rc.getContext('2d'); rx.putImageData(new ImageData(out, W, H), 0, 0);
+        const want = rx.getImageData(0, 0, W, H).data;   // Canvas を通した同じ丸め（事前乗算アルファ）で比べる
+        let d = 0; for (let j = 0; j < got.length; j++) if (got[j] !== want[j]) d++;
+        cases++; if (d) bad++; if (F.active.length && !F.box) spill++;
+      }
+      // 戦闘の乱数：演出を出して描いても、ゲームの乱数列（U.rng）が進まない
+      U.setSeed(4242); const a = [U.rng(), U.rng(), U.rng(), U.rng()];
+      U.setSeed(4242); const b = [U.rng()];
+      F.clear(); for (let k = 0; k < 20; k++) F.play(kinds[k % kinds.length], 120 + k, 120, {}); F.active.forEach((x) => x.fx.update(0.2)); F.draw(cx);
+      b.push(U.rng(), U.rng(), U.rng()); U.setSeed(null);
+      return { cases, bad, spill, rngSame: JSON.stringify(a) === JSON.stringify(b) };
+    });
+    assert.equal(r.cases, 90);
+    assert.equal(r.bad, 0, `範囲を絞った描画が全画面の描画と違う場合が ${r.bad} 件あります`);
+    assert.equal(r.rngSame, true, '演出がゲームの乱数列を進めています');
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('戦闘演出（pixelfx）：pixelfx で例外が出てもそのセッションだけ止め、pixelfx がなくても、戦闘と画面は続く', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await fxSetup(page);
+    await page.evaluate(FX_HELPERS);
+    // 例外：最初の1回で故障扱いになり、以後は出さない。戦闘は進む
+    await page.evaluate(() => { AL.PixelFX = Object.assign({}, AL.PixelFX, { createFx() { throw new Error('テスト用の例外'); } }); AL.Game.paused = false; });
+    assert.equal(await page.evaluate(() => AL.Fx.play('crit', 100, 100, {})), false);
+    assert.equal(await page.evaluate(() => AL.Fx.failed), true);
+    assert.equal(await page.evaluate(() => AL.Fx.available()), false);
+    const before = await page.evaluate(() => AL.Game.runner.battle.time);
+    await page.waitForTimeout(1500);
+    assert.ok((await page.evaluate(() => AL.Game.runner.battle.time)) > before, '戦闘が止まりました');
+    assert.deepEqual(errors.filter((e) => !e.includes('[pixelfx]')), []);
+    // 読み込めない場合
+    await page.evaluate(() => { AL.Fx.failed = false; AL.PixelFX = undefined; });
+    assert.equal(await page.evaluate(() => AL.Fx.available()), false);
+    await page.waitForTimeout(800);
+    assert.equal(await page.evaluate(() => AL.Fx.active.length), 0);
+    assert.deepEqual(errors.filter((e) => !e.includes('[pixelfx]')), []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('戦闘演出（pixelfx）：実際の戦闘を高速進行しても、演出が出て、同時再生は3つ以内で、エラーが出ない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await startAsVeteran(page);
+    await page.evaluate(() => {
+      const s = AL.Game.state; s.settings.speed = 4;
+      Object.keys(s.heroes).forEach((id) => { s.heroes[id].lv = 60; s.heroes[id].lb = 5; }); AL.Stats.invalidate();
+      window.__max = 0; (function tick() { window.__max = Math.max(window.__max, AL.Fx.active.length); requestAnimationFrame(tick); })();
+    });
+    await page.waitForFunction(() => AL.Fx.stats.played.hit > 0 && AL.Fx.stats.played.death > 0, null, { timeout: 30000 });
+    await page.waitForTimeout(3000);
+    const r = await page.evaluate(() => ({ max: window.__max, failed: AL.Fx.failed, played: AL.Fx.stats.played }));
+    assert.ok(r.max <= 3, `同時再生が3つを超えました（${r.max}）`);
+    assert.equal(r.failed, false);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test('戦闘演出（pixelfx）：360px・390px で、各演出が画面に描かれ、画面が横にはみ出さない（スクリーンショット）', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await fxSetup(page);
+    await page.evaluate(() => { window.__upd = AL.Fx.update; AL.Fx.update = function () {}; });   // 時間は手で進める（このページの中だけ）
+    const frame = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    for (const width of [390, 360]) {
+      await page.setViewportSize({ width, height: 780 });
+      await page.waitForTimeout(250);
+      await frame();
+      const pos = await page.evaluate(() => { const bt = AL.Game.runner.battle, V = AL.Scene.vs, e = bt.enemies.find((x) => V[x.uid]), a = bt.allies.filter((x) => V[x.uid]);
+        return { enemy: [V[e.uid].x, V[e.uid].y], party: [a.reduce((s, x) => s + V[x.uid].x, 0) / a.length, a.reduce((s, x) => s + V[x.uid].y, 0) / a.length] }; });
+      // [名前, 種類, 位置, 撮る時刻（秒）]
+      for (const [name, kind, at, t] of [['hit', 'hit', pos.enemy, 0.05], ['crit', 'crit', pos.enemy, 0.1], ['death', 'death', pos.enemy, 0.3], ['heal', 'heal', pos.party, 0.5], ['reward', 'reward', pos.enemy, 0.3], ['chest', 'chest', pos.enemy, 0.7]]) {
+        await page.evaluate(() => AL.Fx.clear()); await frame();
+        await page.evaluate(() => { const c = AL.Scene.canvas; window.__base = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; });
+        await page.evaluate(([k, p, t]) => { AL.Fx.play(k, p[0], p[1], { height: 14 }); window.__upd.call(AL.Fx, t, 1, performance.now() / 1000); }, [kind, at, t]);
+        await frame();
+        const changed = await page.evaluate(() => { const c = AL.Scene.canvas, d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, base = window.__base; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] !== base[i] || d[i + 1] !== base[i + 1] || d[i + 2] !== base[i + 2]) n++; return n; });
+        assert.ok(changed > 400, `${width}px：${name} の演出が画面に描かれていません（変化した画素 ${changed}）`);
+        await page.locator('#scene').screenshot({ path: `${SHOTS}/phone-fx-${name}-${width}.png` });
+      }
+      const sw = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, W: innerWidth }));
+      assert.ok(sw.sw <= sw.W, `${width}px：画面が横にはみ出しています`);
+    }
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
 function pagesExcludes() {
   const lines = readFileSync(new URL('../_config.yml', import.meta.url), 'utf8').split('\n');
   const out = [];
