@@ -4728,11 +4728,15 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
  * pixelfx（js/gfx/pixelfx.js）のドット絵エフェクトを、戦闘画面の Canvas に重ねて描く。描画だけを担当し、戦闘の計算・セーブには触れない。
  * ・同時再生は最大3つ。足りないときは優先度の低いものを止める（通常ヒットは同時2つまで）。出せなかった演出は、これまでの粒子表現のまま。
  * ・設定「演出の品質＝低」では使わない。pixelfx で例外が出たら、そのセッションだけ使わなくする（戦闘は止めない）。
- * ・描画の時間は Scene.render の刻み（上限0.1秒）に、ゲーム速度を掛けて進める。画面が止まっている間（非表示タブなど）は進まない。 */
+ * ・描画の時間は Scene.render の刻み（上限0.1秒）に、ゲーム速度を掛けて進める。画面が止まっている間（非表示タブなど）は進まない。
+ * ・重い端末への自動調整：戦闘中の実際のフレーム間隔で判定し、重い状態が続いたら、そのセッション中は同時再生の上限を3→2に下げる（戻さない）。 */
 (function (G) {
   'use strict';
   var AL = G.AL, W = 320, H = 180;
   var MAX_ACTIVE = 3, MAX_HIT = 2, RETRY = 1.5;
+  // 自動調整の判定：フレーム間隔 SLOW_MS 超えを「遅いフレーム」とし、WINDOW 個ずつの区切りで遅いフレームが SLOW_SHARE 以上なら「重い区切り」。
+  // 重い区切りが HEAVY_RUN 回続いたら、上限を LOW_ACTIVE に下げる。IGNORE_MS 超えの間隔（タブの切り替え・一時停止の明けなど）は数えない。
+  var PERF = { SLOW_MS: 25, WINDOW: 60, SLOW_SHARE: 0.5, HEAVY_RUN: 3, IGNORE_MS: 250, LOW_ACTIVE: 2 };
   // 優先度：ボス撃破 > クリティカル > 撃破 > 回復 > 報酬 > 通常ヒット
   var SPECS = {
     hit: { fx: 'hitSpark', pri: 1, rate: 1, opts: { palette: ['#150b2e', '#3b1d7a', '#6a3fd0', '#9f7bff', '#cbb6ff', '#efe6ff', '#ffffff'] } },
@@ -4744,6 +4748,33 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     boss: { fx: 'poof', pri: 6, rate: 1.1, opts: { palette: ['#07040d', '#150c26', '#2a1a4e', '#47307f', '#6e55b4', '#a28ae0'], stars: ['#ffd84a', '#fff3a6', '#ffffff'] } }
   };
   var Fx = AL.Fx = { active: [], pending: [], failed: false, seq: 0, stats: { played: {}, refused: {}, evicted: 0 }, frame: null, buf: null, off: null, offCtx: null, box: null };
+
+  // 重い端末への自動調整（判定だけ。描画・戦闘の計算・セーブには触れない）。一度下げたら、このセッション（ページを開き直すまで）は戻さない
+  Fx.perf = {
+    PERF: PERF, degraded: false, frames: 0, slow: 0, run: 0, windows: 0, heavyWindows: 0, degradedAt: null,
+    // ms：1フレームの実際の間隔（ミリ秒）。上限を下げたときだけ true を返す
+    sample: function (ms) {
+      var p = this;
+      if (p.degraded || !(ms > 0) || ms > PERF.IGNORE_MS) return false;
+      p.frames++;
+      if (ms > PERF.SLOW_MS) p.slow++;
+      if (p.frames < PERF.WINDOW) return false;
+      var heavy = p.slow >= PERF.WINDOW * PERF.SLOW_SHARE;
+      p.windows++; if (heavy) p.heavyWindows++;
+      p.run = heavy ? p.run + 1 : 0;   // 続けて重い区切りだけを数える（軽い区切りが1つ入ったら数え直す）
+      p.frames = 0; p.slow = 0;
+      if (p.run >= PERF.HEAVY_RUN) { p.degraded = true; p.degradedAt = p.windows; return true; }
+      return false;
+    }
+  };
+  Fx.limit = function () { return Fx.perf.degraded ? PERF.LOW_ACTIVE : MAX_ACTIVE; };
+  function hitLimit() { return Math.min(MAX_HIT, Fx.limit() - 1); }   // 通常ヒットは、ほかの演出の枠を必ず1つ残す（上限3なら2つ、2なら1つ）
+  // 戦闘画面の描画（Scene.render）から、フレームごとに呼ぶ。戦闘が進んでいて、演出を使える（品質「高」）ときだけ数える
+  Fx.frameTime = function (ms) {
+    var g = AL.Game;
+    if (!g || g.paused || !g.runner || !Fx.available()) return;
+    if (Fx.perf.sample(ms) && G.console) console.info('[pixelfx] 描画が重いため、このセッションでは同時再生を' + PERF.LOW_ACTIVE + 'つまでにします');
+  };
 
   // 使えるか：pixelfx が読み込めていて、故障しておらず、演出の品質が「高」
   Fx.available = function () {
@@ -4760,14 +4791,17 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     try {
       o = o || {};
       var refuse = function () { if (!quiet) Fx.stats.refused[kind] = (Fx.stats.refused[kind] || 0) + 1; return false; };
-      if (kind === 'hit' && count('hit') >= MAX_HIT) return refuse();   // 通常ヒットは、ほかの演出の枠を取らないよう同時2つまで
-      if (Fx.active.length >= MAX_ACTIVE) {
-        // 空きがなければ、自分より優先度が低い演出のうち、一番優先度が低く古いものを止める。なければ出さない
-        var victim = null;
-        Fx.active.forEach(function (a) { if (a.spec.pri < spec.pri && (!victim || a.spec.pri < victim.spec.pri)) victim = a; });
-        if (!victim) return refuse();
-        Fx.active.splice(Fx.active.indexOf(victim), 1);
-        Fx.stats.evicted++;
+      if (kind === 'hit' && count('hit') >= hitLimit()) return refuse();   // 通常ヒットは、ほかの演出の枠を取らないよう上限より1つ少なく
+      var limit = Fx.limit();
+      if (Fx.active.length >= limit) {
+        // 空きがなければ、自分より優先度が低い演出を、優先度が低く古いものから止める。足りなければ何も止めずに出さない
+        // （上限を下げた直後で3つ再生中のときは、2つ止める必要がある）
+        var need = Fx.active.length - limit + 1;
+        var victims = Fx.active.filter(function (a) { return a.spec.pri < spec.pri; })
+          .map(function (a, i) { return { a: a, i: i }; })
+          .sort(function (p, q) { return p.a.spec.pri - q.a.spec.pri || p.i - q.i; }).slice(0, need);
+        if (victims.length < need) return refuse();
+        victims.forEach(function (v) { Fx.active.splice(Fx.active.indexOf(v.a), 1); Fx.stats.evicted++; });
       }
       var opts = { x: x, y: y, flip: !!o.flip, seed: 1 + (Fx.seq++ % 997) };
       Object.keys(spec.opts).forEach(function (k) { opts[k] = spec.opts[k]; });
@@ -5170,6 +5204,7 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     if (!Scene.canvas.clientWidth) return; // 非表示中は描画しない
     if (Math.round(Scene.canvas.clientWidth * Math.min(G.devicePixelRatio || 1, 2.5)) !== Scene.canvas.width) Scene.resize();
     var battle = runner.battle, t = nowSec();
+    if (AL.Fx && Scene.lastNow) AL.Fx.frameTime((t - Scene.lastNow) * 1000);   // 重い端末への自動調整の判定（演出の上限だけに使う）
     var dt = Math.min(0.1, t - (Scene.lastNow || t));
     Scene.lastNow = t;
     Scene.consume(battle);

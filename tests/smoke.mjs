@@ -1790,6 +1790,42 @@ test('戦闘演出（pixelfx）：実際の戦闘を高速進行しても、演�
   }
 });
 
+test('戦闘演出（pixelfx）：重い端末への自動調整は、戦闘画面の実際のフレーム間隔を数え、下げたあとは実際の戦闘でも同時2つ以内になる', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    // タイトル画面（戦闘が止まっている）では数えない
+    await page.waitForTimeout(500);
+    assert.equal(await page.evaluate(() => AL.Fx.perf.frames + AL.Fx.perf.windows), 0, 'タイトル画面でフレームを数えています');
+    await startAsVeteran(page);
+    await page.evaluate(() => {
+      const s = AL.Game.state; s.settings.speed = 4;
+      Object.keys(s.heroes).forEach((id) => { s.heroes[id].lv = 60; s.heroes[id].lb = 5; }); AL.Stats.invalidate();
+      AL.UI.closeModal(); AL.UI.show('battle');
+    });
+    // 戦闘画面の描画（Scene.render）から、実際のフレーム間隔が届く（ここの Chromium は軽いので、上限は下がらない）
+    await page.waitForFunction(() => AL.Fx.perf.windows >= 2, null, { timeout: 15000 });
+    assert.equal(await page.evaluate(() => AL.Fx.perf.degraded), false, '軽い環境で上限が下がりました');
+    // 重いフレームが続いた状態を作る（判定の入口に、遅いフレーム間隔を3区切りぶん入れる）。以降は実際の戦闘で確かめる
+    await page.evaluate(() => { for (let i = 0; i < 180; i++) AL.Fx.frameTime(40); });
+    assert.deepEqual(await page.evaluate(() => [AL.Fx.perf.degraded, AL.Fx.limit()]), [true, 2]);
+    await page.evaluate(() => {
+      window.__max = 0; window.__maxHit = 0; window.__p0 = Object.values(AL.Fx.stats.played).reduce((a, b) => a + b, 0);
+      (function tick() { const a = AL.Fx.active; window.__max = Math.max(window.__max, a.length); window.__maxHit = Math.max(window.__maxHit, a.filter((x) => x.kind === 'hit').length); requestAnimationFrame(tick); })();
+    });
+    await page.waitForFunction(() => Object.values(AL.Fx.stats.played).reduce((a, b) => a + b, 0) - window.__p0 >= 10, null, { timeout: 30000 });
+    await page.waitForTimeout(2000);
+    const r = await page.evaluate(() => ({ max: window.__max, maxHit: window.__maxHit, limit: AL.Fx.limit(), failed: AL.Fx.failed }));
+    assert.ok(r.max <= 2, `上限を下げたあとに、同時再生が2つを超えました（${r.max}）`);
+    assert.ok(r.maxHit <= 1, `上限を下げたあとに、通常ヒットが同時に${r.maxHit}つ出ました`);
+    assert.equal(r.limit, 2, 'セッションの途中で上限が戻りました');
+    assert.equal(r.failed, false);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
 test('戦闘演出（pixelfx）：360px・390px で、各演出が画面に描かれ、画面が横にはみ出さない（スクリーンショット）', async () => {
   const { context, page, errors } = await openPhone();
   try {

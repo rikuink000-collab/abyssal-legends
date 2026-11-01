@@ -88,3 +88,112 @@ test('セーブの形式・保存キーは変わらない（SAVE_VERSION 3）', 
   assert.equal(AL.CONFIG.BACKUP_KEY, 'abyssal_legends_save_backup');
   assert.equal(AL.CONFIG.GAME_VERSION, '1.7.0');
 });
+
+// ── 重い端末への自動調整（AL.Fx.perf）：fx.js の区画だけを、架空の AL・PixelFX の上で動かして確かめる ──
+import vm from 'node:vm';
+function loadFx({ effects = 'high', paused = false } = {}) {
+  const AL = {
+    Game: { paused, runner: {}, state: { settings: { effects } } },
+    PixelFX: { fx: {}, createFx: (def, options) => ({ options, meta: { size: [10, 10], origin: [5, 5] }, update() {}, done: () => false, draw() {} }) }
+  };
+  const ctx = vm.createContext({ AL, console: { info() {}, error() {} } });
+  vm.runInContext(block('js/gfx/fx.js'), ctx);
+  return AL;
+}
+const feed = (Fx, ms, n) => { let flips = 0; for (let i = 0; i < n; i++) if (Fx.perf.sample(ms)) flips++; return flips; };
+
+test('自動調整の判定：遅いフレーム（25ms超）が半分以上の区切り（60フレーム）が3回続いたら、上限を3→2に下げる。境界の値', () => {
+  const { Fx } = loadFx();
+  const P = Fx.perf.PERF;
+  assert.deepEqual({ ...P }, { SLOW_MS: 25, WINDOW: 60, SLOW_SHARE: 0.5, HEAVY_RUN: 3, IGNORE_MS: 250, LOW_ACTIVE: 2 });
+  assert.equal(Fx.limit(), 3);
+  // 区切りの中で、遅いフレームがちょうど半分（30/60）なら重い。25ms ちょうどは遅いフレームに数えない
+  const window = (slow) => { for (let i = 0; i < 60; i++) Fx.perf.sample(i < slow ? 26 : 25); };
+  window(30); window(30);
+  assert.equal(Fx.perf.degraded, false, '2回ではまだ下げない');
+  assert.equal(Fx.perf.run, 2);
+  window(29);                       // 29/60 は軽い区切り → 続けての回数は0に戻る
+  assert.equal(Fx.perf.run, 0);
+  window(30); window(30);
+  assert.equal(Fx.perf.degraded, false);
+  window(30);
+  assert.equal(Fx.perf.degraded, true, '重い区切りが3回続いたら下げる');
+  assert.equal(Fx.limit(), 2);
+  assert.equal(Fx.perf.degradedAt, 6);
+});
+
+test('自動調整の判定：一度下げたら、このセッション中は戻さない（軽いフレームが続いても上限2のまま。切り替えの通知も1回だけ）', () => {
+  const { Fx } = loadFx();
+  assert.equal(feed(Fx, 40, 180), 1, '33ms 超が続くと、180フレーム目で1回だけ下がる');
+  assert.equal(Fx.perf.degraded, true);
+  assert.equal(feed(Fx, 8, 6000), 0);
+  assert.equal(feed(Fx, 40, 600), 0);
+  assert.equal(Fx.limit(), 2);
+  Fx.clear();                       // 戦闘が切り替わっても（Scene が Fx.clear を呼ぶ）戻さない
+  assert.equal(Fx.limit(), 2);
+});
+
+test('自動調整の判定：よくあるフレーム間隔のパターン（60Hz・120Hz・ときどきの乱れ・長い停止）では下げず、30fps が続くと下げる', () => {
+  const pattern = (gen, n) => { const { Fx } = loadFx(); for (let i = 0; i < n; i++) Fx.perf.sample(gen(i)); return Fx.perf.degraded; };
+  assert.equal(pattern(() => 16.7, 6000), false, '60Hz');
+  assert.equal(pattern(() => 8.3, 12000), false, '120Hz');
+  assert.equal(pattern((i) => (i % 10 === 0 ? 33.3 : 16.7), 6000), false, '10回に1回 33ms（前回の計測の95%点に近い）');
+  assert.equal(pattern((i) => (i % 5 < 2 ? 33.3 : 16.7), 6000), false, '40% が 33ms');
+  assert.equal(pattern((i) => (i % 60 === 0 ? 5000 : 16.7), 6000), false, 'タブの切り替えなどの長い停止（250ms 超）は数えない');
+  assert.equal(pattern((i) => (i % 2 ? 1000 : 33.3), 360), true, '長い停止を挟んでも、数えたフレームだけで判定する（180個の 33ms で下がる）');
+  assert.equal(pattern(() => 33.3, 179), false, '30fps でも、3区切り（180フレーム）たつまでは下げない');
+  assert.equal(pattern(() => 33.3, 180), true, '30fps が180フレーム（約6秒）続くと下げる');
+  for (const bad of [0, -5, NaN, undefined, Infinity]) assert.equal(pattern(() => bad, 600), false, `不正な値 ${bad} は数えない`);
+});
+
+test('自動調整の判定：戦闘が止まっている・演出の品質「低」・pixelfx が故障しているときは、フレームを数えない', () => {
+  for (const opt of [{ paused: true }, { effects: 'low' }]) {
+    const { Fx } = loadFx(opt);
+    for (let i = 0; i < 600; i++) Fx.frameTime(40);
+    assert.equal(Fx.perf.degraded, false, JSON.stringify(opt));
+    assert.equal(Fx.perf.frames + Fx.perf.windows, 0);
+  }
+  const AL = loadFx();
+  AL.Fx.failed = true;
+  for (let i = 0; i < 600; i++) AL.Fx.frameTime(40);
+  assert.equal(AL.Fx.perf.windows, 0);
+  const ok = loadFx();
+  for (let i = 0; i < 180; i++) ok.Fx.frameTime(40);
+  assert.equal(ok.Fx.perf.degraded, true, '戦闘中で品質「高」なら数える');
+});
+
+test('自動調整の後：上限2でも優先度（ボス撃破＞クリティカル＞撃破＞回復＞報酬＞通常ヒット）で押しのけ、通常ヒットは1つまで', () => {
+  const { Fx } = loadFx();
+  const kinds = () => [...Fx.active].map((a) => a.kind);   // vm の中の配列を、このテストの配列に直す（deepEqual のため）
+  // 下げる前：これまでどおり（全体3つ・通常ヒット2つ）
+  assert.equal(Fx.play('hit', 1, 1), true); assert.equal(Fx.play('hit', 1, 1), true); assert.equal(Fx.play('hit', 1, 1), false);
+  assert.equal(Fx.play('heal', 1, 1), true);
+  assert.deepEqual(kinds(), ['hit', 'hit', 'heal']);
+  feed(Fx, 40, 180);
+  assert.equal(Fx.limit(), 2);
+  // 下げた直後に3つ再生中：再生中のものは止めない。新しい演出は、低いものを2つ止めないと出せない
+  assert.equal(Fx.play('hit', 1, 1), false, '通常ヒットは1つまで');
+  assert.equal(Fx.play('reward', 1, 1), true, '報酬は通常ヒットを2つ止めて出る');
+  assert.deepEqual(kinds(), ['heal', 'reward']);
+  assert.equal(Fx.play('hit', 1, 1), false, '空きがなく、自分より低いものもない');
+  assert.equal(Fx.play('death', 1, 1), true);
+  assert.deepEqual(kinds(), ['heal', 'death'], '一番低い報酬を止める');
+  assert.equal(Fx.play('crit', 1, 1), true);
+  assert.deepEqual(kinds(), ['death', 'crit']);
+  assert.equal(Fx.play('heal', 1, 1), false, '回復は撃破・クリティカルを押しのけない');
+  assert.equal(Fx.play('boss', 1, 1), true);
+  assert.deepEqual(kinds(), ['crit', 'boss']);
+  assert.equal(Fx.play('crit', 1, 1), false, '同じ優先度は押しのけない');
+  assert.ok(Fx.active.length <= 2);
+  Fx.clear();
+  assert.equal(Fx.play('hit', 1, 1), true); assert.equal(Fx.play('hit', 1, 1), false); assert.equal(Fx.play('chest', 1, 1), true);
+  assert.deepEqual(kinds(), ['hit', 'chest']);
+  // 下げた直後に3つ再生中で、自分より低いものが1つしかない：何も止めずに出さない（上限を超えたまま増やさない）
+  const B = loadFx().Fx, bk = () => [...B.active].map((a) => a.kind);
+  B.play('hit', 1, 1); B.play('heal', 1, 1); B.play('death', 1, 1);
+  feed(B, 40, 180);
+  assert.equal(B.play('reward', 1, 1), false);
+  assert.deepEqual(bk(), ['hit', 'heal', 'death'], '止められるのが1つでは足りないので、何も止めない');
+  assert.equal(B.play('boss', 1, 1), true);
+  assert.deepEqual(bk(), ['death', 'boss'], '低いものから2つ（通常ヒット・回復）を止める');
+});
