@@ -7,5 +7,6 @@ exclude:
   - package-lock.json
   - tests/
   - third_party/
+  - gas/
   - test-results/
   - node_modules/
