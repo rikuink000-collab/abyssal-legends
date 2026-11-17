@@ -1884,6 +1884,258 @@ function isPublished(path, excludes) {
   });
 }
 
+// ---------- 不具合・ご意見の報告フォーム ----------
+// 送信先は実際の Google Apps Script ではなく、Playwright の route で作った偽の受付先です（本物での確認は gas/SETUP.md の手順でユーザーが行う）。
+const REPORT_URL = 'https://script.google.com/macros/s/AKfycbxTESTTESTTESTTEST_abc-123/exec';
+const CORS = { 'access-control-allow-origin': '*' };
+
+async function openReport(page, { configured = true } = {}) {
+  await boot(page);
+  await startAsVeteran(page);
+  if (configured) await page.evaluate((u) => { AL.CONFIG.REPORT.ENDPOINT = u; AL.CONFIG.REPORT.COOLDOWN_SEC = 0; }, REPORT_URL);
+  await page.evaluate(() => { AL.UI.show('settings'); });
+  await page.click('#open-report');
+  await page.waitForSelector('.backdrop .rf');
+}
+const fillReport = async (page, o = {}) => {
+  const v = { type: 'bug', title: '装備が消える', detail: '売却のあとに戻らない', ...o };
+  if (v.type != null) await page.selectOption('#rf-type', v.type);
+  await page.fill('#rf-title', v.title);
+  await page.fill('#rf-detail', v.detail);
+  if (v.freq) await page.selectOption('#rf-freq', v.freq);
+  if (v.steps) await page.fill('#rf-steps', v.steps);
+  if (v.email != null) await page.fill('#rf-email', v.email);
+};
+const fakeServer = async (page, handler) => {
+  const seen = [];
+  await page.route(REPORT_URL, async (route) => {
+    const r = route.request();
+    seen.push({ method: r.method(), type: r.headers()['content-type'], body: r.postData() });
+    await handler(route, seen);
+  });
+  return seen;
+};
+const okReply = (id = 'BR-20261117-0001') => (route) => route.fulfill({ status: 200, headers: CORS, contentType: 'application/json', body: JSON.stringify({ ok: true, id }) });
+
+test('報告フォーム：設定画面の入口から開閉でき、開く・閉じるだけではセーブが変わらない。既存の設定画面は動く', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await boot(page);
+    await startAsVeteran(page);
+    await page.evaluate(() => { AL.Game.paused = true; AL.UI.show('settings'); AL.Game.save(); });
+    const snap = () => page.evaluate(([a, b]) => ({ main: localStorage.getItem(a), backup: localStorage.getItem(b), keys: Object.keys(localStorage).sort(), st: JSON.stringify(AL.Game.state) }), [SAVE_KEY, BACKUP_KEY]);
+    const before = await snap();
+    // 既存の設定画面の項目が残っている
+    const txt = await page.locator('#screen').innerText();
+    for (const t of ['戦闘速度', '演出の品質', '今すぐ保存', '書き出し（ファイル）', 'データを初期化', '遊び方', '不具合・ご意見を報告する']) assert.ok(txt.includes(t), `設定画面に「${t}」がありません`);
+    await page.evaluate(() => AL.UI.show('menu'));
+    assert.ok((await page.locator('#screen').innerText()).includes('v' + await page.evaluate(() => AL.CONFIG.GAME_VERSION)), 'メニューのバージョン表示');
+    await page.evaluate(() => AL.UI.show('settings'));
+    await page.click('#open-report');
+    assert.equal(await page.locator('.backdrop .modal').count(), 1);
+    assert.match(await page.locator('#rf-noconf').innerText(), /送信先がまだ設定されていない/, '未設定のとき、送信できない旨を表示する');
+    assert.equal(await page.locator('#rf-next').isDisabled(), true, '未設定のときは「内容を確認する」を押せない');
+    await page.click('.modal-close');
+    assert.equal(await page.locator('.backdrop').count(), 0, '× で閉じる');
+    await page.click('#open-report');
+    await page.click('[data-act="rfClose"]');
+    assert.equal(await page.locator('.backdrop').count(), 0, 'キャンセルで閉じる');
+    await page.click('#open-report'); await page.keyboard.press('Escape');   // Esc では閉じない仕様でも、壊れないこと
+    await page.click('.modal-close');
+    const after = await snap();
+    assert.deepEqual(after, before, '開く・閉じるだけでセーブ・状態が変わりました');
+    // 既存の設定操作（演出の品質）が動く
+    await page.click('[data-act="setFx"][data-v="low"]');
+    assert.equal(await page.evaluate(() => AL.Game.state.settings.effects), 'low');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('報告フォーム（360px・390px）：横にはみ出さず、入力欄・ボタンが画面内に収まる（スクリーンショット）', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await openReport(page);
+    for (const width of [360, 390]) {
+      await page.setViewportSize({ width, height: 700 });
+      await page.waitForTimeout(150);
+      const fit = await boxesFit(page, '.backdrop .rf select, .backdrop .rf input, .backdrop .rf textarea, .backdrop .rf .btn');
+      assert.ok(fit.n >= 8, '入力欄が見つかりません');
+      assert.deepEqual([fit.out, fit.overlap], [0, 0], `${width}px：入力欄・ボタンがはみ出す／重なる ${JSON.stringify(fit)}`);
+      assert.ok(fit.sw <= fit.W, `${width}px：画面が横にはみ出しています`);
+      const m = await page.evaluate(() => { const r = document.querySelector('.backdrop .modal').getBoundingClientRect(); return [r.left, r.right, innerWidth]; });
+      assert.ok(m[0] >= 0 && m[1] <= m[2] + 0.5, `${width}px：モーダルがはみ出す`);
+      const fs = await page.evaluate(() => [...document.querySelectorAll('.rf select, .rf input, .rf textarea')].map((e) => parseFloat(getComputedStyle(e).fontSize)));
+      assert.ok(fs.every((f) => f >= 16), '入力欄の文字が16px未満（iOS で入力時に拡大される）');
+      await page.screenshot({ path: `${SHOTS}/phone-report-form-${width}.png` });
+      await fillReport(page, { freq: 'once', steps: '1. 開く\n2. 売る', email: 'me@example.com', detail: 'あ'.repeat(400) });
+      await page.click('#rf-next');
+      await page.waitForSelector('#rf-send');
+      const fit2 = await boxesFit(page, '.backdrop .rf .btn');
+      assert.deepEqual([fit2.out, fit2.overlap], [0, 0], `${width}px（確認画面）：ボタンがはみ出す／重なる`);
+      assert.ok((await page.evaluate(() => document.documentElement.scrollWidth)) <= width);
+      await page.screenshot({ path: `${SHOTS}/phone-report-confirm-${width}.png` });
+      await page.click('#rf-back');
+      await page.waitForSelector('#rf-title');
+      assert.equal(await page.inputValue('#rf-title'), '装備が消える', '戻っても入力内容が残る');
+    }
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('報告フォーム：必須・文字数・メール形式・空白だけの入力を、送信前に画面で知らせる', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await openReport(page);
+    const err = (k) => page.locator(`[data-err="${k}"]`).innerText();
+    await page.click('#rf-next');
+    assert.match(await err('type'), /種類を選んで/);
+    assert.match(await err('title'), /タイトルを入力/);
+    assert.match(await err('detail'), /詳細を入力/);
+    assert.equal(await page.locator('#rf-send').count(), 0, '入力エラーのまま確認画面へ進まない');
+    await fillReport(page, { type: 'bug', title: '   ', detail: ' \n ' });
+    await page.click('#rf-next');
+    assert.match(await err('title'), /タイトルを入力/, '空白だけのタイトル');
+    assert.match(await err('detail'), /詳細を入力/, '空白だけの詳細');
+    await fillReport(page, { title: 'あ'.repeat(101), detail: 'x'.repeat(3001), steps: 'y'.repeat(2001), email: 'abc' });
+    assert.equal(await page.locator('[data-count="title"]').innerText(), '101 / 100');
+    await page.click('#rf-next');
+    for (const [k, re] of [['title', /100文字以内/], ['detail', /3000文字以内/], ['steps', /2000文字以内/], ['email', /形式が正しくありません/]]) assert.match(await err(k), re, k);
+    await fillReport(page, { title: 'あ'.repeat(100), detail: 'x'.repeat(3000), steps: 'y'.repeat(2000), email: '' });
+    assert.equal(await err('title'), '', '入力し直すとそのエラーは消える');
+    await page.click('#rf-next');
+    await page.waitForSelector('#rf-send');   // 上限ちょうど・メール空欄で確認画面へ進める
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('報告フォーム：入力内容を HTML として解釈しない（確認画面・結果画面・送信内容）', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await openReport(page);
+    const seen = await fakeServer(page, okReply('BR-20261117-0009'));
+    const evil = '<img src=x onerror="window.__xss=1"><script>window.__xss=2</script>"\'&';
+    await page.evaluate(() => { window.__xss = 0; });
+    await fillReport(page, { title: evil, detail: evil, steps: evil, email: 'me@example.com' });
+    await page.click('#rf-next');
+    await page.waitForSelector('#rf-send');
+    const info = await page.evaluate(() => ({ imgs: document.querySelectorAll('.backdrop img, .backdrop script').length, text: document.querySelector('.backdrop .modal-body').innerText, xss: window.__xss }));
+    assert.equal(info.imgs, 0, '入力した HTML が要素になっています');
+    assert.ok(info.text.includes('<img src=x onerror="window.__xss=1">'), '入力した文字がそのまま表示されない');
+    await page.click('#rf-send');
+    await page.waitForSelector('#rf-done');
+    await page.waitForTimeout(100);
+    assert.equal(await page.evaluate(() => window.__xss), 0, '入力したスクリプトが実行されました');
+    assert.equal(JSON.parse(seen[0].body).title, evil, '送信内容は入力どおり（HTML としては扱わない）');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('報告フォーム：送信の流れ（確認 → 送信中 → 受付完了と報告ID）。送信中はボタンを無効にし、連打しても1回だけ送る', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await openReport(page);
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const seen = await fakeServer(page, async (route) => { await gate; await okReply('BR-20261117-0042')(route); });
+    await fillReport(page, { freq: 'sometimes', steps: '1. 開く', email: '' });
+    await page.click('#rf-next');
+    await page.waitForSelector('#rf-send');
+    const sum = await page.locator('.rf-sums').innerText();
+    for (const t of ['バグ・不具合', '装備が消える', '売却のあとに戻らない', 'ときどき', '1. 開く', '（未入力）', 'バージョン：v', 'OS：', 'ブラウザ：']) assert.ok(sum.includes(t), `確認画面に「${t}」がありません`);
+    assert.equal(seen.length, 0, '確認の段階では送らない');
+    await page.click('#rf-send');
+    await page.waitForSelector('#rf-sending');
+    assert.equal(await page.locator('#rf-send').isDisabled(), true, '送信中は送信ボタンが無効');
+    assert.equal(await page.locator('#rf-back').isDisabled(), true);
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.modal-close')).visibility), 'hidden', '送信中は × を隠す');
+    await page.locator('#rf-send').click({ force: true, noWaitAfter: true }).catch(() => {});   // 連打しても無視される
+    await page.evaluate(() => { const b = document.querySelector('#rf-send'); b && b.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    await page.waitForTimeout(150);
+    assert.equal(seen.length, 1, `送信が ${seen.length} 回出ています（二重送信）`);
+    release();
+    await page.waitForSelector('#rf-done');
+    assert.equal(await page.locator('#rf-id').innerText(), 'BR-20261117-0042', '受付完了に報告IDを表示する');
+    await page.screenshot({ path: `${SHOTS}/phone-report-done-390.png` });
+    // 送った内容
+    assert.deepEqual(seen.map((s) => [s.method, s.type.toLowerCase()]), [['POST', 'text/plain;charset=utf-8']], 'text/plain の単純な POST（事前確認なし）');
+    const body = JSON.parse(seen[0].body);
+    assert.deepEqual(Object.keys(body).sort(), ['app', 'browser', 'detail', 'email', 'freq', 'os', 'requestId', 'steps', 'title', 'type', 'v', 'version', 'website']);
+    assert.equal(body.version, await page.evaluate(() => AL.CONFIG.GAME_VERSION));
+    assert.equal(body.email, '');
+    assert.ok(!JSON.stringify(body).includes('currency') && !JSON.stringify(body).includes('heroes'), 'ゲームの進行情報が含まれている');
+    // 閉じて開き直すと、送信済みの内容は残っていない
+    await page.click('[data-act="rfClose"]');
+    await page.click('#open-report');
+    assert.equal(await page.inputValue('#rf-title'), '');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('報告フォーム：通信エラー・サーバーの異常・受付エラーを区別して表示し、入力内容を保持して、再送しても二重に保存されない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await openReport(page);
+    let mode = 'abort';
+    const seen = await fakeServer(page, async (route) => {
+      if (mode === 'abort') return route.abort('failed');
+      if (mode === 'http500') return route.fulfill({ status: 500, headers: CORS, body: 'oops' });
+      if (mode === 'rate') return route.fulfill({ status: 200, headers: CORS, contentType: 'application/json', body: JSON.stringify({ ok: false, code: 'rate_limited' }) });
+      if (mode === 'html') return route.fulfill({ status: 200, headers: CORS, contentType: 'text/html', body: '<html>login</html>' });
+      return okReply('BR-20261117-0077')(route);
+    });
+    await fillReport(page, { freq: 'once', steps: '手順メモ', email: 'me@example.com', detail: '詳しい内容' });
+    await page.click('#rf-next');
+    const attempt = async (m) => { mode = m; await page.click('#rf-send'); await page.waitForSelector('#rf-fail'); return page.locator('#rf-fail').innerText(); };
+    assert.match(await attempt('abort'), /通信エラー.*通信できませんでした.*重複して保存されることはありません/s);
+    assert.equal(await page.locator('#rf-send').innerText(), '再送信する');
+    assert.equal(await page.locator('#rf-send').isDisabled(), false, '失敗後は再送できる');
+    assert.match(await attempt('http500'), /送信エラー.*500/s);
+    assert.match(await attempt('html'), /送信エラー.*読み取れませんでした/s);
+    assert.match(await attempt('rate'), /受付エラー.*しばらく待って/s);
+    await page.screenshot({ path: `${SHOTS}/phone-report-error-390.png` });
+    // 失敗しても入力内容は保持されている
+    await page.click('#rf-back');
+    await page.waitForSelector('#rf-title');
+    const kept = await page.evaluate(() => ['type', 'title', 'detail', 'freq', 'steps', 'email'].map((k) => document.querySelector('#rf-' + k).value));
+    assert.deepEqual(kept, ['bug', '装備が消える', '詳しい内容', 'once', '手順メモ', 'me@example.com'], '失敗後に入力内容が消えた');
+    await page.click('#rf-next');
+    mode = 'ok'; await page.click('#rf-send'); await page.waitForSelector('#rf-done');
+    assert.equal(await page.locator('#rf-id').innerText(), 'BR-20261117-0077');
+    const ids = new Set(seen.map((s) => JSON.parse(s.body).requestId));
+    assert.equal(seen.length, 5);
+    assert.equal(ids.size, 1, '同じ内容の再送はすべて同じ requestId（サーバーが二重に保存しない）');
+    assert.deepEqual(errors.filter((e) => !/Failed to load resource|net::ERR/.test(e)), []);
+  } finally { await context.close(); }
+});
+
+test('報告機能が使えなくても（未設定・通信不能・fetch なし）、ゲーム本体の戦闘・画面は止まらない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await openReport(page);
+    await page.evaluate(() => { AL.Game.paused = false; });
+    await fakeServer(page, (route) => route.abort('failed'));
+    await fillReport(page);
+    await page.click('#rf-next'); await page.click('#rf-send'); await page.waitForSelector('#rf-fail');
+    // fetch がない環境でも、例外にならずエラー表示になる
+    await page.evaluate(() => { window.__f = window.fetch; window.fetch = undefined; });
+    await page.click('#rf-send'); await page.waitForSelector('#rf-fail');
+    assert.match(await page.locator('#rf-fail').innerText(), /通信/);
+    await page.evaluate(() => { window.fetch = window.__f; });
+    const t0 = await page.evaluate(() => AL.Game.runner.battle.time ?? AL.Game.state.stats.kills);
+    await page.waitForTimeout(1500);
+    const t1 = await page.evaluate(() => AL.Game.runner.battle.time ?? AL.Game.state.stats.kills);
+    assert.notEqual(t1, t0, '報告フォームが開いていても戦闘が進んでいません');
+    await page.click('[data-act="rfBack"]'); await page.click('[data-act="rfClose"]');
+    await page.evaluate(() => AL.UI.show('battle'));
+    assert.equal(await page.locator('.backdrop').count(), 0);
+    // 送信先が未設定のままでも、画面操作で例外が出ない
+    await page.evaluate(() => { AL.CONFIG.REPORT.ENDPOINT = ''; AL.UI.show('settings'); });
+    await page.click('#open-report');
+    assert.equal(await page.locator('#rf-next').isDisabled(), true);
+    assert.deepEqual(errors.filter((e) => !/Failed to load resource|net::ERR/.test(e)), []);
+  } finally { await context.close(); }
+});
+
 test('GitHub Pages の公開対象が index.html・README.md・og-image.png（共有時のリンクカード画像）だけである', () => {
   const published = trackedFiles().filter((f) => isPublished(f, pagesExcludes())).sort();
   assert.deepEqual(published, ['README.md', 'index.html', 'og-image.png'],

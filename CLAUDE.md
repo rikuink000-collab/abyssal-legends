@@ -92,6 +92,19 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
   合成・転送は、演出が使う範囲だけに絞っている（余白は `PAD_*`。pixelfx の `meta.size` は光の広がりを含まないため、実測で決めた）。
   エフェクトを足す・変えるときは、`tests/smoke.mjs` の「範囲を絞った描画が全画面の描画と一致する」テストも確認する。
 
+## 不具合・ご意見の報告フォームのルール
+
+- 設定画面の「不具合・ご意見を報告する」から送る独立した機能。通信と入力チェックは `AL.Report`（`js/core/report.js`）、画面は `js/ui/report.js`。
+  **ゲームの状態（`AL.Game.state`）・セーブ・戦闘・乱数（`U.rng`）には触れない。** フォームを開く・閉じるだけでセーブは変わらない（`tests/report.test.mjs` がソースの参照を、`tests/smoke.mjs` がセーブの不変を確認する）。
+  セーブへの影響は A（セーブの項目・保存キー・`SAVE_VERSION` は変えない）。
+- 送るのは、入力内容とバージョン（`AL.CONFIG.GAME_VERSION`）・OS・ブラウザ情報だけ。**セーブデータ・所持品・進行状況は送らない**（項目を増やすときはユーザーに相談する）。
+- 送信先は `AL.CONFIG.REPORT.ENDPOINT` の1か所だけ。**未設定（空）のままにしておき、仮の URL を入れない。** `https://script.google.com/macros/s/…/exec` 以外は送らない。
+  URL を設定してよいのは、ユーザーが自分の Google アカウントでデプロイした URL を教えてくれたときだけ。
+- 受付側は `gas/Code.gs`（Google Apps Script）。手順書は `gas/SETUP.md`。`gas/` は `_config.yml` の `exclude` に入れ、公開しない。ソースに URL・ID・キーを書かない。
+  文字数の上限・種類・列構成はゲーム側と同じ値にする（`tests/report.test.mjs` が一致を確認する）。
+- 入力内容は HTML として解釈しない（`esc()` と `value` で扱う）。スプレッドシートでは `= + - @` で始まる文字を無害化する。
+- 本物の Google Apps Script・スプレッドシート・ブラウザからの送信（CORS）はテストできない。テストは架空の Google 環境と Playwright の偽の受付先で行っている。実環境の確認はユーザーに依頼する。
+
 ## テスト
 
 - `npm test`：`tests/smoke.mjs`（Playwright の Chromium、iPhone 13 相当の画面）と `tests/*.test.mjs`（Node.js）を実行する。
@@ -120,6 +133,9 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
   装備中の判定は編成に関係なく所持しているすべての仲間で行う。確認ダイアログ・キャンセル・装備タップで強化画面を開く操作は `tests/smoke.mjs` で確認する。
 - `tests/ogp.test.mjs`：共有時のリンクカード（OGP・X Card）のメタタグが1つずつあること、画像 `og-image.png`（1200×630）の URL・存在・公開対象を確認する。
   X での実際の表示はテストでは確かめられないため、公開後に確認する。
+- `tests/report.test.mjs`：報告機能の入力チェック（必須・文字数の境界・メール形式・空白だけ）、送信先の検証、送る項目、通信の成功・各種の失敗、二重送信の防止と再送、
+  GAS の `doPost`（架空の SpreadsheetApp・LockService などの上）の保存・検証・報告ID・再送・頻度制限・数式の無害化・ロック、GAS とゲームの設定の一致を確認する。
+  フォームの操作（開閉・セーブ不変・360px／390px・確認 → 送信中 → 完了・失敗時の入力保持・HTML を解釈しないこと）は `tests/smoke.mjs` の「報告」で確認する。
 - `tests/pixelfx.test.mjs`：pixelfx の区画のライセンス表示・形（`import`・`export` や外部通信がないこと、大きさの予算）、区画の順序、
   アダプターの優先度・同時再生の上限、重い端末への自動調整の判定（境界の値・戻さないこと・数えない場面・上限2での押しのけ）、`third_party/` の公開除外、クレジットを確認する。演出が実際に出ること・同時再生・描画の一致・
   例外時の退避・実際の戦闘での動作は `tests/smoke.mjs`（「戦闘演出（pixelfx）」）で確認する。見た目は `test-results/phone-fx-*.png` を目で確認する。

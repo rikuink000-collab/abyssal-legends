@@ -323,6 +323,22 @@ label.toggle:last-child { border-bottom: none; }
 #toasts { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--nav-h) + 14px + env(safe-area-inset-bottom)); z-index: 120; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; width: min(92vw, 420px); }
 .toast { padding: 8px 14px; border-radius: 10px; background: rgba(30, 26, 51, 0.96); border: 1px solid var(--line2); font-size: 13px; font-weight: 700; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5); animation: slideup 0.2s; text-align: center; }
 .toast.good { border-color: var(--good); } .toast.bad { border-color: var(--bad); } .toast.rare { border-color: var(--gold); color: var(--gold); }
+.rf-row { margin-bottom: 10px; }
+.rf-row > label { display: block; font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+.rf-req, .rf-opt { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; margin-left: 4px; }
+.rf-req { background: rgba(255, 90, 106, 0.2); color: #ff9aa6; }
+.rf-opt { background: var(--panel2); color: var(--dim); }
+.rf select, .rf input[type=text], .rf input[type=email], .rf textarea { width: 100%; font-size: 16px; min-height: 44px; }
+.rf textarea { font-family: inherit; min-height: 110px; resize: vertical; }
+.rf input[type=email] { background: var(--bg2); border: 1px solid var(--line2); border-radius: 8px; padding: 8px 10px; }
+.rf-meta { display: flex; justify-content: space-between; gap: 8px; min-height: 16px; }
+.rf-err { color: var(--bad); font-size: 12px; }
+.rf-sums { margin-top: 8px; }
+.rf-info { margin-top: 6px; line-height: 1.5; }
+.rf-sum { margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.rf-pre { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.rf-id { font-family: ui-monospace, monospace; font-size: 16px; user-select: all; }
+.backdrop.rf-sending .modal-close { visibility: hidden; }
 .notice { padding: 8px 10px; border-radius: 8px; background: rgba(255, 165, 58, 0.1); border: 1px solid rgba(255, 165, 58, 0.4); font-size: 13px; margin-bottom: 8px; }
 .notice.info { background: rgba(74, 168, 255, 0.08); border-color: rgba(74, 168, 255, 0.4); }
 .notice.danger { background: rgba(255, 90, 106, 0.1); border-color: rgba(255, 90, 106, 0.5); }
@@ -575,12 +591,21 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.7.0',
+    GAME_VERSION: '1.8.0',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
     EXPORT_FORMAT: 'ABYSSAL_LEGENDS_SAVE',
     AUTOSAVE_SEC: 30,
+
+    // ---- 不具合・ご意見の報告（js/core/report.js） ----
+    // ENDPOINT：Google Apps Script のウェブアプリ URL（https://script.google.com/macros/s/…/exec）をここに設定します。
+    // 空のままだと、報告フォームは開けますが送信できません（設定手順は gas/SETUP.md）。
+    REPORT: {
+      ENDPOINT: '',
+      TIMEOUT_MS: 15000,              // 応答を待つ時間（ミリ秒）
+      COOLDOWN_SEC: 60                // 送信に成功してから、次に送れるまでの間隔（秒）
+    },
 
     // ---- 戦闘 ----
     BATTLE: {
@@ -4035,6 +4060,168 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
+<script>/* js/core/report.js */
+/* ABYSSAL LEGENDS - 不具合・ご意見の報告（通信と入力チェック）
+ * ゲームの状態（state）・セーブ・戦闘・乱数（U.rng）には一切触れない独立した機能です。
+ * 送るのは、プレイヤーが入力した内容と、バージョン・OS・ブラウザ情報だけです（セーブデータ・所持品・進行状況は送りません）。
+ * 送信先（Google Apps Script のウェブアプリ URL）は AL.CONFIG.REPORT.ENDPOINT に設定します（未設定のときは送信できません）。 */
+(function (G) {
+  'use strict';
+  var AL = G.AL = G.AL || {};
+  var C = AL.CONFIG;
+
+  var R = AL.Report = {};
+  // 文字数の上限。gas/Code.gs の LIMITS と同じ値にします（サーバー側でも検証します。tests/report.test.mjs が一致を確認します）
+  R.LIMITS = { title: 100, detail: 3000, steps: 2000, email: 254, os: 100, browser: 300, version: 20 };
+  R.TYPES = [{ id: 'bug', name: 'バグ・不具合' }, { id: 'request', name: '改善要望' }, { id: 'other', name: 'その他' }];
+  R.FREQS = [{ id: 'always', name: '毎回' }, { id: 'sometimes', name: 'ときどき' }, { id: 'once', name: '一度だけ' }, { id: 'unknown', name: '不明' }];
+  R.PROTOCOL = 1;
+  R.APP = 'abyssal-legends';
+
+  // 送信中の状態（この端末のこの画面を開いている間だけ。セーブには保存しません）
+  R.state = { sending: false, requestId: null, fingerprint: null, lastOkAt: 0 };
+  R.draft = null;   // 送信前の下書き（モーダルを閉じて開き直しても残す。メモリのみ）
+
+  function has(list, id) { return list.some(function (x) { return x.id === id; }); }
+  function nameOf(list, id) { var f = list.filter(function (x) { return x.id === id; })[0]; return f ? f.name : ''; }
+  R.typeName = function (id) { return nameOf(R.TYPES, id); };
+  R.freqName = function (id) { return nameOf(R.FREQS, id); };
+
+  // 制御文字を取り除き（改行・タブは残す）、改行を \n にそろえ、前後の空白を削る
+  R.clean = function (s) {
+    return String(s == null ? '' : s).replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u2028\u2029\u202A-\u202E\u2066-\u2069]/g, '').trim();
+  };
+
+  var EMAIL = /^[^\s@<>"'`,;()\[\]\\]+@[^\s@<>"'`,;()\[\]\\.]+(\.[^\s@<>"'`,;()\[\]\\.]+)+$/;
+  R.isEmail = function (s) { return typeof s === 'string' && s.length <= R.LIMITS.email && EMAIL.test(s) && s.indexOf('..') < 0; };
+
+  // 送信先 URL は Google Apps Script のウェブアプリ（https）だけを受け付ける（設定ミスで別のサイトへ送らないため）
+  R.endpointOk = function (u) {
+    return typeof u === 'string' && /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]{10,}\/exec$/.test(u);
+  };
+  R.endpoint = function () { return (C.REPORT && C.REPORT.ENDPOINT) || ''; };
+  R.configured = function () { return R.endpointOk(R.endpoint()); };
+
+  // 入力チェック。input: {type, title, detail, freq, steps, email}。errors は項目名 → 文言
+  R.validate = function (input) {
+    input = input || {};
+    var L = R.LIMITS, errors = {}, v = {
+      type: String(input.type || ''), freq: String(input.freq || ''),
+      title: R.clean(input.title), detail: R.clean(input.detail), steps: R.clean(input.steps), email: R.clean(input.email)
+    };
+    if (!v.type) errors.type = '報告の種類を選んでください';
+    else if (!has(R.TYPES, v.type)) errors.type = '報告の種類が正しくありません';
+    if (!v.title) errors.title = 'タイトルを入力してください';
+    else if (v.title.length > L.title) errors.title = 'タイトルは' + L.title + '文字以内で入力してください（現在 ' + v.title.length + ' 文字）';
+    if (!v.detail) errors.detail = '詳細を入力してください';
+    else if (v.detail.length > L.detail) errors.detail = '詳細は' + L.detail + '文字以内で入力してください（現在 ' + v.detail.length + ' 文字）';
+    if (v.freq && !has(R.FREQS, v.freq)) errors.freq = '発生頻度が正しくありません';
+    if (v.steps.length > L.steps) errors.steps = '再現手順は' + L.steps + '文字以内で入力してください（現在 ' + v.steps.length + ' 文字）';
+    if (v.email && !R.isEmail(v.email)) errors.email = 'メールアドレスの形式が正しくありません（返信が不要なら空欄のままで送れます）';
+    return { ok: Object.keys(errors).length === 0, errors: errors, value: v };
+  };
+
+  // OS・ブラウザ情報（取得できる範囲だけ。User-Agent と、あれば userAgentData.platform）
+  R.collectEnv = function (nav) {
+    nav = nav || G.navigator || {};
+    var ua = String(nav.userAgent || ''), os = '';
+    try { if (nav.userAgentData && nav.userAgentData.platform) os = String(nav.userAgentData.platform); } catch (e) { /* 取得できなければ UA から推測 */ }
+    if (!os) {
+      os = /iPhone|iPad|iPod/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac OS X|Macintosh/.test(ua) ? 'macOS' : /CrOS/.test(ua) ? 'ChromeOS' : /Linux/.test(ua) ? 'Linux' : String(nav.platform || '');
+    }
+    return { os: R.clean(os).slice(0, R.LIMITS.os) || '不明', browser: R.clean(ua).slice(0, R.LIMITS.browser) || '不明' };
+  };
+
+  // 送信1回分を区別する ID（再送しても同じ報告を二重に保存しないための目印）。ゲームの乱数 U.rng は使わない
+  R.newRequestId = function () {
+    var a = '', i;
+    try {
+      var buf = new Uint8Array(16); G.crypto.getRandomValues(buf);
+      for (i = 0; i < buf.length; i++) a += ('0' + buf[i].toString(16)).slice(-2);
+    } catch (e) {
+      for (i = 0; i < 32; i++) a += Math.floor(Math.random() * 16).toString(16);
+    }
+    return a;
+  };
+
+  R.buildPayload = function (value, env, requestId) {
+    return {
+      app: R.APP, v: R.PROTOCOL, requestId: requestId,
+      type: value.type, title: value.title, detail: value.detail, freq: value.freq || '', steps: value.steps || '',
+      email: value.email || '', version: String(C.GAME_VERSION), os: env.os, browser: env.browser,
+      website: ''   // 蜜壺（人には見えない欄。自動送信プログラムが埋めたら、サーバーが破棄する）
+    };
+  };
+
+  // 1回の送信。結果は {ok:true, id} か {ok:false, kind, code, message}
+  //  kind: 'config'（送信先未設定）／'network'（通信できない・時間切れ）／'http'（サーバーの異常）／'bad_response'（想定外の応答）／'rejected'（受付側が拒否）
+  R.send = function (payload, opts) {
+    opts = opts || {};
+    var url = opts.endpoint != null ? opts.endpoint : R.endpoint();
+    var fetchFn = opts.fetch || G.fetch;
+    function fail(kind, code, message) { return { ok: false, kind: kind, code: code || kind, message: message }; }
+    if (!R.endpointOk(url)) return Promise.resolve(fail('config', 'config', '報告の送信先が設定されていないため、現在は送信できません'));
+    if (typeof fetchFn !== 'function') return Promise.resolve(fail('network', 'network', 'このブラウザでは通信機能を使えません'));
+    var timeout = opts.timeoutMs || (C.REPORT && C.REPORT.TIMEOUT_MS) || 15000;
+    var ctl = null, timer = null;
+    try { if (G.AbortController) ctl = new G.AbortController(); } catch (e) { ctl = null; }
+    var timedOut = new Promise(function (res) { timer = setTimeout(function () { if (ctl) { try { ctl.abort(); } catch (e) { /* 無視 */ } } res('timeout'); }, timeout); });
+    var req;
+    try {
+      req = Promise.resolve(fetchFn(url, {
+        method: 'POST', redirect: 'follow', credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },   // プリフライト（事前確認）が発生しない「単純リクエスト」にする
+        body: JSON.stringify(payload), signal: ctl ? ctl.signal : undefined
+      }));
+    } catch (e) { clearTimeout(timer); return Promise.resolve(fail('network', 'network', '通信を開始できませんでした')); }
+    var work = req.then(function (resp) {
+      if (!resp || !resp.ok) return fail('http', 'http', '受付サーバーがエラーを返しました（' + (resp ? resp.status : '応答なし') + '）');
+      return resp.text().then(function (text) {
+        var j; try { j = JSON.parse(text); } catch (e) { return fail('bad_response', 'bad_response', '受付サーバーの応答を読み取れませんでした'); }
+        if (j && j.ok === true && typeof j.id === 'string' && /^[A-Za-z0-9-]{4,40}$/.test(j.id)) return { ok: true, id: j.id };
+        if (j && j.ok === false) return fail('rejected', typeof j.code === 'string' ? j.code.slice(0, 30) : 'rejected', R.rejectMessage(j.code));
+        return fail('bad_response', 'bad_response', '受付サーバーの応答を読み取れませんでした');
+      });
+    }, function () { return fail('network', 'network', '通信できませんでした（電波の状態をご確認ください）'); })
+      .catch(function () { return fail('network', 'network', '通信できませんでした（電波の状態をご確認ください）'); });
+    return Promise.race([work, timedOut.then(function () { return fail('network', 'timeout', '時間内に応答がありませんでした'); })]).then(function (r) { clearTimeout(timer); return r; });
+  };
+
+  R.rejectMessage = function (code) {
+    switch (code) {
+      case 'invalid': return '入力内容が受け付けられませんでした。内容を確認してください';
+      case 'rate_limited': return '送信が集中しているため、しばらく待ってからもう一度お試しください';
+      case 'busy': return '受付が混み合っています。しばらく待ってからもう一度お試しください';
+      case 'too_large': return '送信内容が大きすぎます。文章を短くしてください';
+      default: return '報告を受け付けられませんでした';
+    }
+  };
+
+  // 同じ内容かどうかの目印（内容が同じ間は同じ requestId で再送し、二重に保存されないようにする）
+  function fingerprint(value) { return JSON.stringify([value.type, value.title, value.detail, value.freq, value.steps, value.email]); }
+
+  // 送信（二重送信を防ぐ）。入力チェック → 送信 → 結果。送信中の呼び出しは無視して {ok:false, kind:'busy'} を返す
+  R.submit = function (input, opts) {
+    opts = opts || {};
+    var S = R.state, now = opts.now != null ? opts.now : Date.now();
+    if (S.sending) return Promise.resolve({ ok: false, kind: 'busy', code: 'busy', message: '送信中です' });
+    var chk = R.validate(input);
+    if (!chk.ok) return Promise.resolve({ ok: false, kind: 'invalid', code: 'invalid', errors: chk.errors, message: '入力内容を確認してください' });
+    var wait = ((C.REPORT && C.REPORT.COOLDOWN_SEC) || 0) * 1000 - (now - S.lastOkAt);
+    if (S.lastOkAt && wait > 0) return Promise.resolve({ ok: false, kind: 'cooldown', code: 'cooldown', message: '続けて送信できません。あと ' + Math.ceil(wait / 1000) + ' 秒お待ちください' });
+    var fp = fingerprint(chk.value);
+    if (!S.requestId || S.fingerprint !== fp) { S.requestId = R.newRequestId(); S.fingerprint = fp; }
+    S.sending = true;
+    var payload = R.buildPayload(chk.value, R.collectEnv(opts.nav), S.requestId);
+    return R.send(payload, opts).then(function (r) {
+      S.sending = false;
+      if (r.ok) { S.lastOkAt = opts.now != null ? opts.now : Date.now(); S.requestId = null; S.fingerprint = null; }
+      return r;
+    }, function (e) { S.sending = false; return { ok: false, kind: 'network', code: 'network', message: '通信できませんでした' }; });
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
 <script>/* js/core/game.js */
 /* ABYSSAL LEGENDS - セーブ管理とゲーム本体（ループ・時間管理） */
 (function (G) {
@@ -6836,6 +7023,7 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
         '<div class="btn-group mt"><label class="btn"><input type="file" accept=".json,application/json,text/plain" data-change="importFile" style="display:none">ファイルを選択</label></div>' +
         '<textarea id="import-text" class="mt" placeholder="ここにセーブデータのテキストを貼り付け"></textarea><button class="btn block mt" data-act="importText">テキストから読み込む</button></div>' +
         '<div class="panel" style="border-color:rgba(255,90,106,0.5)"><h3 class="bad">初期化</h3><div class="small sub">すべての進行を削除して最初から始めます。この操作は取り消せません。</div><button class="btn danger block mt" data-act="resetAll">データを初期化</button></div>' +
+        '<div class="panel"><h3>サポート</h3><div class="small sub">不具合やご意見を、ゲームから直接お送りいただけます。セーブデータや所持品は送信しません。</div><button class="btn block mt" id="open-report" data-act="openReport">不具合・ご意見を報告する</button></div>' +
         '<div class="panel"><h3>遊び方</h3><div class="small sub">戦闘は自動で進みます。仲間の編成・装備・レベルを整えて、より深い階層を目指しましょう。10階層ごとにボスが出現します。第' + C.REBIRTH.MIN_FLOOR + '層に到達すると転生でき、永続的な強化を得られます。ゲームを閉じていても最大' + C.IDLE.BASE_MAX_HOURS + '時間分の放置報酬が貯まります。</div></div>';
     }
   });
@@ -6934,6 +7122,157 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
         var r = AL.Game.resetAll();
         if (!r.ok) { UI.toast(r.msg, 'bad', 5000); return; }
         UI.toast('初期化しました'); UI.renderCurrency(); UI.show('battle');
+      }
+    });
+  });
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>/* js/ui/report.js */
+/* ABYSSAL LEGENDS - 不具合・ご意見の報告フォーム（設定画面から開くモーダル）
+ * 画面だけを担当します。入力チェックと通信は AL.Report。ゲームの状態・セーブには触れません（開く・閉じるだけでセーブは変わりません）。
+ * 入力内容は HTML として解釈せず、すべて esc() で無害化して表示します。 */
+(function (G) {
+  'use strict';
+  var AL = G.AL = G.AL || {};
+  var U = AL.U, UI = AL.UI, R = AL.Report;
+  var esc = U.esc;
+
+  var M = null;          // 開いているモーダル
+  var view = 'form';     // form → confirm → done
+  var errors = {};       // 入力チェックの結果（項目名 → 文言）
+  var failure = null;    // 直前の送信失敗
+
+  function draft() { return R.draft || (R.draft = { type: '', title: '', detail: '', freq: '', steps: '', email: '' }); }
+  function $(sel) { return M ? M.el.querySelector(sel) : null; }
+  function top() { var b = $('.modal-body'); if (b) b.scrollTop = 0; }   // 画面を切り替えたら先頭へ（エラー表示を見逃さない）
+
+  function opts(list, cur, ph) {
+    return (ph ? '<option value="">' + esc(ph) + '</option>' : '') + list.map(function (x) { return '<option value="' + x.id + '"' + (cur === x.id ? ' selected' : '') + '>' + esc(x.name) + '</option>'; }).join('');
+  }
+  function field(key, label, req, control, max) {
+    return '<div class="rf-row"><label for="rf-' + key + '">' + label + (req ? ' <span class="rf-req">必須</span>' : ' <span class="rf-opt">任意</span>') + '</label>' + control +
+      '<div class="rf-meta"><span class="rf-err" data-err="' + key + '" role="alert">' + (errors[key] ? esc(errors[key]) : '') + '</span>' + (max ? '<span class="rf-count tiny dim" data-count="' + key + '"></span>' : '') + '</div></div>';
+  }
+
+  function formHtml() {
+    var d = draft(), L = R.LIMITS;
+    return '<div class="rf">' +
+      (R.configured() ? '' : '<div class="notice danger" id="rf-noconf">報告の送信先がまだ設定されていないため、現在は送信できません。</div>') +
+      '<div class="small sub">不具合やご意見をお寄せください。返信はお約束できません。</div>' +
+      field('type', '報告の種類', true, '<select id="rf-type" data-rf="type">' + opts(R.TYPES, d.type, '選択してください') + '</select>') +
+      field('title', 'タイトル', true, '<input type="text" id="rf-title" data-rf="title" autocomplete="off" placeholder="例：装備を売却するとフリーズする">', L.title) +
+      field('detail', '詳細', true, '<textarea id="rf-detail" data-rf="detail" placeholder="いつ・どの画面で・何が起きたか（要望は内容と理由）"></textarea>', L.detail) +
+      field('freq', '発生頻度', false, '<select id="rf-freq" data-rf="freq">' + opts(R.FREQS, d.freq, '選択しない') + '</select>') +
+      field('steps', '再現手順', false, '<textarea id="rf-steps" data-rf="steps" placeholder="1. 〜を開く　2. 〜をタップ…"></textarea>', L.steps) +
+      field('email', '返信先メールアドレス', false, '<input type="email" id="rf-email" data-rf="email" inputmode="email" autocomplete="off" placeholder="返信が必要な場合だけ入力">') +
+      '<div class="rf-info tiny dim">自動で送る情報：ゲームバージョン・OS・ブラウザ情報（User-Agent）。<b>セーブデータ・所持品・ゲームの進行状況は送りません。</b>メールアドレスは、入力した場合だけ返信のために保存します。</div>' +
+      '<div class="btn-group mt"><button class="btn ghost" data-act="rfClose">キャンセル</button><button class="btn primary" id="rf-next" data-act="rfConfirm"' + (R.configured() ? '' : ' disabled') + ' style="flex:1">内容を確認する</button></div></div>';
+  }
+
+  function summaryHtml(v) {
+    function row(k, val, pre) { return '<div class="rf-sum"><div class="tiny dim">' + k + '</div><div' + (pre ? ' class="rf-pre"' : '') + '>' + (val ? esc(val) : '<span class="dim">（未入力）</span>') + '</div></div>'; }
+    var env = R.collectEnv();
+    return row('報告の種類', R.typeName(v.type)) + row('タイトル', v.title) + row('詳細', v.detail, true) + row('発生頻度', R.freqName(v.freq)) + row('再現手順', v.steps, true) +
+      row('返信先', v.email) + '<div class="rf-sum"><div class="tiny dim">自動で送る情報</div><div class="tiny rf-pre">バージョン：v' + esc(AL.CONFIG.GAME_VERSION) + '\nOS：' + esc(env.os) + '\nブラウザ：' + esc(env.browser) + '</div></div>';
+  }
+
+  function failureHtml(f) {
+    var more = f.kind === 'network'
+      ? '<div class="tiny mt-s">通信が途中で切れた場合、報告は届いている可能性があります。もう一度送っても、同じ内容が重複して保存されることはありません。</div>' : '';
+    var t = f.kind === 'network' ? '通信エラー' : f.kind === 'rejected' || f.kind === 'cooldown' ? '受付エラー' : f.kind === 'config' ? '設定エラー' : '送信エラー';
+    return '<div class="notice danger" id="rf-fail" role="alert"><b>' + t + '：</b>' + esc(f.message || '送信できませんでした') + more + '</div>';
+  }
+
+  function confirmHtml(sending) {
+    var v = R.validate(draft()).value;
+    return '<div class="rf">' + (failure ? failureHtml(failure) : '') + '<div class="small sub">この内容で送信します。よろしいですか？</div><div class="rf-sums">' + summaryHtml(v) + '</div>' +
+      (sending ? '<div class="notice info mt" id="rf-sending">送信中です…そのままお待ちください</div>' : '') +
+      '<div class="btn-group mt"><button class="btn ghost" id="rf-back" data-act="rfBack"' + (sending ? ' disabled' : '') + '>戻って直す</button>' +
+      '<button class="btn primary" id="rf-send" data-act="rfSend"' + (sending || !R.configured() ? ' disabled' : '') + ' style="flex:1">' + (sending ? '送信中…' : failure ? '再送信する' : '送信する') + '</button></div></div>';
+  }
+
+  function doneHtml(id) {
+    return '<div class="rf"><div class="notice info" id="rf-done"><b>報告を受け付けました。ありがとうございます。</b><div class="mt-s">報告ID：<b id="rf-id" class="rf-id">' + esc(id) + '</b></div><div class="tiny dim mt-s">お問い合わせの際は、この報告IDをお伝えください。</div></div>' +
+      '<button class="btn primary block mt" data-act="rfClose">閉じる</button></div>';
+  }
+
+  function show(next) {
+    view = next;
+    if (!M) return;
+    M.setBody(view === 'form' ? formHtml() : view === 'confirm' ? confirmHtml(false) : confirmHtml(false));
+    if (view === 'form') fillForm();
+    top();
+  }
+  function fillForm() {
+    var d = draft();   // 入力値は innerHTML ではなく value に入れる（HTML として解釈させない）
+    ['title', 'detail', 'steps', 'email'].forEach(function (k) { var el = $('#rf-' + k); if (el) el.value = d[k]; });
+    counts();
+  }
+  function counts() {
+    var d = draft(), L = R.LIMITS;
+    ['title', 'detail', 'steps'].forEach(function (k) {
+      var el = $('[data-count="' + k + '"]'); if (!el) return;
+      var n = R.clean(d[k]).length;
+      el.textContent = n + ' / ' + L[k]; el.classList.toggle('bad', n > L[k]);
+    });
+  }
+  function setSending(on) {
+    if (!M) return;
+    M.el.classList.toggle('rf-sending', on);
+    M.setBody(confirmHtml(on));
+  }
+
+  UI.openReport = function () {
+    if (M) return;
+    failure = null; errors = {}; view = 'form';
+    M = UI.modal({
+      id: 'report', title: '不具合・ご意見を報告', html: formHtml(), persistent: true,
+      onOpen: function (bd) {
+        bd.addEventListener('input', onInput); bd.addEventListener('change', onInput);
+        fillForm();
+      },
+      onClose: function () { M = null; }
+    });
+  };
+  function onInput(e) {
+    var k = e.target && e.target.getAttribute && e.target.getAttribute('data-rf');
+    if (!k) return;
+    draft()[k] = e.target.value;
+    if (errors[k]) { delete errors[k]; var er = $('[data-err="' + k + '"]'); if (er) er.textContent = ''; }
+    counts();
+  }
+  function closeReport() { if (M && !R.state.sending) M.close(); }
+
+  UI.action('openReport', function () { UI.openReport(); });
+  UI.action('rfClose', closeReport);
+  UI.action('rfBack', function () { if (R.state.sending) return; failure = null; show('form'); });
+  UI.action('rfConfirm', function () {
+    var chk = R.validate(draft());
+    errors = chk.errors;
+    if (!chk.ok) {
+      show('form');
+      var first = ['type', 'title', 'detail', 'freq', 'steps', 'email'].filter(function (k) { return errors[k]; })[0];
+      var el = first && $('#rf-' + first); if (el) { try { el.scrollIntoView({ block: 'center' }); el.focus(); } catch (e) { /* 無視 */ } }
+      return;
+    }
+    failure = null; show('confirm');
+  });
+  UI.action('rfSend', function () {
+    if (R.state.sending || !M) return;       // 二重送信を防ぐ（押した直後にボタンも無効にする）
+    var chk = R.validate(draft());
+    if (!chk.ok) { errors = chk.errors; failure = null; show('form'); return; }
+    failure = null; setSending(true);
+    var local = M;
+    R.submit(draft()).then(function (r) {
+      if (!M || M !== local) return;
+      if (r.ok) {
+        R.draft = null; failure = null; view = 'done';
+        M.el.classList.remove('rf-sending'); M.setBody(doneHtml(r.id)); top();
+      } else if (r.kind === 'invalid') {
+        errors = r.errors || {}; M.el.classList.remove('rf-sending'); show('form');
+      } else {
+        failure = r; view = 'confirm'; M.el.classList.remove('rf-sending'); M.setBody(confirmHtml(false)); top();   // 入力内容はそのまま
       }
     });
   });
