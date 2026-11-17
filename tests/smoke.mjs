@@ -1806,18 +1806,42 @@ test('戦闘演出（pixelfx）：重い端末への自動調整は、戦闘画�
     // 戦闘画面の描画（Scene.render）から、実際のフレーム間隔が届く（ここの Chromium は軽いので、上限は下がらない）
     await page.waitForFunction(() => AL.Fx.perf.windows >= 2, null, { timeout: 15000 });
     assert.equal(await page.evaluate(() => AL.Fx.perf.degraded), false, '軽い環境で上限が下がりました');
-    // 重いフレームが続いた状態を作る（判定の入口に、遅いフレーム間隔を3区切りぶん入れる）。以降は実際の戦闘で確かめる
-    await page.evaluate(() => { for (let i = 0; i < 180; i++) AL.Fx.frameTime(40); });
+    // 上限を下げる「瞬間」に、すでに3つ再生中という最悪の状態を、決定的に作る（演出を直接3つ再生し、同じ処理の中で上限を下げる）。
+    // 上限が下がっても、再生中の演出はその場では消えず、次の演出が始まるときに押し出される。そのため、下げる前から再生中だった演出は
+    // 「上限を下げたあとに新しく始まった演出」の数には含めない（以前は、これを含めて数えていたため、戦闘の進み方しだいで断続的に失敗した）。
+    const atDegrade = await page.evaluate(() => {
+      AL.Fx.clear();
+      AL.Fx.play('crit', 100, 100, { height: 14 }); AL.Fx.play('heal', 160, 110, { height: 14 }); AL.Fx.play('death', 220, 100, { height: 14 });
+      window.__old = new Set(AL.Fx.active);                    // 上限を下げる前から再生中の演出
+      const n = AL.Fx.active.length;
+      for (let i = 0; i < 180; i++) AL.Fx.frameTime(40);       // 遅いフレーム間隔を3区切りぶん入れる（判定の入口）。以降は実際の戦闘で確かめる
+      return n;
+    });
+    assert.equal(atDegrade, 3, '上限を下げる瞬間に3つ再生中の状態を作れませんでした（テストの前提）');
     assert.deepEqual(await page.evaluate(() => [AL.Fx.perf.degraded, AL.Fx.limit()]), [true, 2]);
     await page.evaluate(() => {
-      window.__max = 0; window.__maxHit = 0; window.__p0 = Object.values(AL.Fx.stats.played).reduce((a, b) => a + b, 0);
-      (function tick() { const a = AL.Fx.active; window.__max = Math.max(window.__max, a.length); window.__maxHit = Math.max(window.__maxHit, a.filter((x) => x.kind === 'hit').length); requestAnimationFrame(tick); })();
+      window.__maxNew = 0; window.__maxNewHit = 0; window.__maxAfter = 0; window.__maxAfterHit = 0; window.__oldGone = false;
+      window.__p0 = Object.values(AL.Fx.stats.played).reduce((a, b) => a + b, 0);
+      (function tick() {
+        const a = AL.Fx.active, fresh = a.filter((x) => !window.__old.has(x));   // 上限を下げたあとに新しく始まった演出
+        window.__maxNew = Math.max(window.__maxNew, fresh.length);
+        window.__maxNewHit = Math.max(window.__maxNewHit, fresh.filter((x) => x.kind === 'hit').length);
+        if (fresh.length === a.length) window.__oldGone = true;                   // 下げる前から再生中だった演出が、すべて終わった（押し出された）
+        if (window.__oldGone) {                                                    // そのあとは、同時再生の合計そのものを数える
+          window.__maxAfter = Math.max(window.__maxAfter, a.length);
+          window.__maxAfterHit = Math.max(window.__maxAfterHit, a.filter((x) => x.kind === 'hit').length);
+        }
+        requestAnimationFrame(tick);
+      })();
     });
+    await page.waitForFunction(() => window.__oldGone, null, { timeout: 15000 }).catch(() => { throw new Error('上限を下げる前から再生中だった演出が、15秒たっても終わりません'); });
     await page.waitForFunction(() => Object.values(AL.Fx.stats.played).reduce((a, b) => a + b, 0) - window.__p0 >= 10, null, { timeout: 30000 });
     await page.waitForTimeout(2000);
-    const r = await page.evaluate(() => ({ max: window.__max, maxHit: window.__maxHit, limit: AL.Fx.limit(), failed: AL.Fx.failed }));
-    assert.ok(r.max <= 2, `上限を下げたあとに、同時再生が2つを超えました（${r.max}）`);
-    assert.ok(r.maxHit <= 1, `上限を下げたあとに、通常ヒットが同時に${r.maxHit}つ出ました`);
+    const r = await page.evaluate(() => ({ maxNew: window.__maxNew, maxNewHit: window.__maxNewHit, maxAfter: window.__maxAfter, maxAfterHit: window.__maxAfterHit, limit: AL.Fx.limit(), failed: AL.Fx.failed }));
+    assert.ok(r.maxNew <= 2, `上限を下げたあとに新しく始まった演出が、同時に2つを超えました（${r.maxNew}）`);
+    assert.ok(r.maxNewHit <= 1, `上限を下げたあとに新しく始まった通常ヒットが、同時に${r.maxNewHit}つ出ました`);
+    assert.ok(r.maxAfter <= 2, `下げる前の演出が終わったあとに、同時再生が2つを超えました（${r.maxAfter}）`);
+    assert.ok(r.maxAfterHit <= 1, `下げる前の演出が終わったあとに、通常ヒットが同時に${r.maxAfterHit}つ出ました`);
     assert.equal(r.limit, 2, 'セッションの途中で上限が戻りました');
     assert.equal(r.failed, false);
     assert.deepEqual(errors, []);
