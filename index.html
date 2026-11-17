@@ -305,6 +305,34 @@ label.toggle:last-child { border-bottom: none; }
 .gres .nm { font-size: 10px; font-weight: 800; line-height: 1.2; min-height: 2.4em; }
 .gres .new { position: absolute; top: -6px; left: -4px; background: var(--bad); color: #fff; font-size: 10px; font-weight: 900; padding: 0 5px; border-radius: 4px; }
 .gres .lbtag { font-size: 10px; color: var(--gold); }
+/* 仲間のイラスト（立ち絵）：仲間詳細の表示と、★5 カットイン */
+.hero-art { flex: 0 0 auto; width: min(38vw, 150px); aspect-ratio: 2 / 3; padding: 0; border: 1px solid rgba(170, 196, 255, 0.55); border-radius: 12px; overflow: hidden; cursor: zoom-in; background: radial-gradient(ellipse at 50% 36%, #f6faff 0%, #d9e8ff 55%, #b3cbef 100%); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.35); }
+.hero-art img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.hero-art-full { text-align: center; padding: 6px; border-radius: 12px; background: radial-gradient(ellipse at 50% 36%, #f6faff 0%, #d9e8ff 55%, #b3cbef 100%); }
+.hero-art-full img { max-width: 100%; max-height: 68vh; max-height: 68dvh; width: auto; height: auto; object-fit: contain; }
+.gcut { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 12px 12px calc(12px + env(safe-area-inset-bottom)); overflow: hidden; background: radial-gradient(circle at 50% 42%, #1a2a5a, #04030a 72%); background: radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--c) 38%, #120a28), #04030a 72%); animation: gcutIn 0.3s ease-out; }
+.gcut-circle { position: absolute; left: 50%; top: 42%; width: min(130vw, 680px); height: min(130vw, 680px); transform: translate(-50%, -50%); pointer-events: none; }
+.gcut-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; animation: gcutFlash 0.7s ease-out; }
+.gcut-card { position: relative; height: min(52vh, 52dvh, 440px); aspect-ratio: 2 / 3; max-width: 84vw; border: 2px solid var(--gold); border-radius: 14px; overflow: hidden; background: radial-gradient(ellipse at 50% 36%, #f6faff 0%, #d9e8ff 55%, #a9c4ec 100%); box-shadow: 0 0 26px var(--c), 0 0 64px var(--c); animation: gcutCard 0.85s cubic-bezier(0.2, 0.9, 0.3, 1.15) 0.1s both; }
+.gcut-art { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.gcut-art img { width: 100%; height: 100%; object-fit: contain; }
+.gcut-art.sprite { background: radial-gradient(circle at 50% 50%, #26407a, #0a0d24); }
+.gcut-art.sprite img { width: 70%; height: auto; aspect-ratio: 1; }
+.gcut-info { position: relative; text-align: center; animation: gcutText 0.6s ease-out 0.5s both; }
+.gcut-rare { font-size: 22px; letter-spacing: 0.1em; filter: drop-shadow(0 0 8px rgba(255, 204, 77, 0.9)); }
+.gcut-name { font-size: clamp(18px, 5.4vw, 26px); font-weight: 900; color: #ffe9a8; text-shadow: 0 0 12px var(--c), 0 2px 4px #000; line-height: 1.25; }
+.gcut-tags { margin-top: 4px; }
+.gcut-new { background: var(--bad); color: #fff; font-size: 11px; font-weight: 900; padding: 1px 6px; border-radius: 4px; }
+.gcut-sub { color: var(--gold); min-height: 1.2em; }
+.gcut-count { position: absolute; top: calc(10px + env(safe-area-inset-top)); left: 14px; color: var(--sub); }
+.gcut-skipall { position: absolute; top: calc(6px + env(safe-area-inset-top)); right: 10px; }
+.gcut-hint { position: relative; }
+.gcut.low .gcut-card, .gcut.low .gcut-info, .gcut.low .gcut-flash { animation: none; }
+@keyframes gcutIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes gcutFlash { 0% { opacity: 0.9; } 100% { opacity: 0; } }
+@keyframes gcutCard { 0% { opacity: 0; transform: scale(0.7) translateY(24px); } 100% { opacity: 1; transform: none; } }
+@keyframes gcutText { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .gcut, .gcut-card, .gcut-info, .gcut-flash { animation: none; } }
 
 /* ===== モーダル ===== */
 #modal-root .backdrop { position: fixed; inset: 0; background: rgba(4, 3, 10, 0.72); z-index: 90; display: flex; align-items: flex-end; justify-content: center; animation: fadein 0.15s; }
@@ -591,7 +619,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.8.0',
+    GAME_VERSION: '1.9.0',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -1136,6 +1164,17 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   D.HEROES = {};
   D.HERO_LIST = LIST;
   LIST.forEach(function (h) { D.HEROES[h.id] = h; });
+
+  // ===== 仲間のイラスト（立ち絵） =====
+  // イラストを持つ仲間だけを登録する。画像は assets/heroes/<ID>.webp（縦横比 2:3）。登録のない仲間・読み込めない仲間は、従来のドット絵を表示する。
+  // v：画像を差し替えたときに増やす（ブラウザのキャッシュを更新するため）／ w・h：画像の寸法（表示の枠を先に確保する）
+  // 追加の手順：画像を assets/heroes/ に置き、ここに1行足す（tests/hero-art.test.mjs が、登録と画像の対応・形式・寸法・容量を確認する）
+  D.HERO_ART = { h06: { v: 1, w: 1024, h: 1536 } };
+  D.heroArtUrl = function (id) {
+    // 自分のキーだけを見る（'__proto__'・'constructor' など、オブジェクトが元から持つ名前を拾わないため）
+    if (typeof id !== 'string' || !Object.prototype.hasOwnProperty.call(D.HERO_ART, id) || !Object.prototype.hasOwnProperty.call(D.HEROES, id)) return null;
+    return 'assets/heroes/' + id + '.webp?v=' + D.HERO_ART[id].v;
+  };
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -6161,6 +6200,29 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
   UI.action('heroFilter', function (el) { ui.heroFilter[el.dataset.k] = el.dataset.v; UI.render(); });
 
   // ===== 仲間の詳細 =====
+  // ---- 仲間のイラスト（仲間詳細・★5カットイン専用）。未登録・読み込み失敗のときは、従来のドット絵に戻す ----
+  UI.artBroken = {};
+  UI.artFail = function (img) {
+    try {
+      var wrap = img.closest('[data-art-id]'), id = wrap && wrap.getAttribute('data-art-id');
+      if (!id) return;
+      UI.artBroken[id] = true;   // このセッションでは、同じ仲間のイラストを再度取りに行かない
+      if (wrap.classList.contains('hero-art')) wrap.outerHTML = UI.heroImg(id, 112, 'hero-big');
+      else { wrap.classList.add('sprite'); wrap.innerHTML = UI.heroImg(id, 160, 'gcut-sprite'); }
+    } catch (e) { /* 表示の切り替えに失敗しても、画面は壊さない */ }
+  };
+  UI.heroArt = function (id) {
+    var url = !UI.artBroken[id] && D.heroArtUrl(id), a = D.HERO_ART[id];
+    if (!url) return UI.heroImg(id, 112, 'hero-big');
+    return '<button class="hero-art" data-act="heroArtView" data-id="' + id + '" data-art-id="' + id + '" aria-label="イラストを拡大">' +
+      '<img src="' + url + '" width="' + a.w + '" height="' + a.h + '" alt="' + esc(D.HEROES[id].name) + '" decoding="async" onerror="AL.UI.artFail(this)"></button>';
+  };
+  UI.action('heroArtView', function (el) {
+    var id = el.dataset.id, url = D.heroArtUrl(id);
+    if (!url || UI.artBroken[id]) return;
+    UI.modal({ id: 'heroart', title: esc(D.HEROES[id].name), html: '<div class="hero-art-full"><img src="' + url + '" alt="' + esc(D.HEROES[id].name) + '"></div>', wide: true });
+  });
+
   function heroDetailHtml(id) {
     var st = UI.st(), hd = D.HEROES[id], h = st.heroes[id];
     if (!h) return '<div class="dim">未所持です</div>';
@@ -6185,7 +6247,7 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
         return '<span class="' + (si.count >= +n ? 'good' : 'dim') + '">(' + n + ')' + esc(set.bonuses[n].desc) + '</span>'; }).join(' ') + '</div>';
     }).join('');
     var lbCost = AL.Heroes.shardLbCost(id);
-    return '<div class="row" style="align-items:flex-start;gap:12px">' + UI.heroImg(id, 112, 'hero-big') +
+    return '<div class="row" style="align-items:flex-start;gap:12px">' + UI.heroArt(id) +
       '<div class="grow"><div style="font-weight:900;font-size:17px">' + esc(hd.name) + '</div>' +
       '<div class="mt-s">' + UI.stars(hd.rarity) + ' ' + UI.elemTag(hd.element) + ' ' + UI.roleTag(hd.role) + '</div>' +
       '<div class="small mt">Lv <b>' + h.lv + '</b> / ' + cap + '　限界突破 ' + UI.lbPips(h.lb) + '</div>' +
@@ -6627,15 +6689,44 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
   });
 
   // ===== 召喚演出 =====
+  // ★5 のカットイン用の魔法陣（乱数を使わず、時間だけで動く）
+  function drawCutCircle(x, t, col) {
+    x.clearRect(0, 0, 420, 420); x.save(); x.translate(210, 210);
+    var ap = Math.min(1, t / 0.6), ring, i, j, k, a, px, py;
+    for (ring = 0; ring < 3; ring++) {
+      x.strokeStyle = AL.Sprites.rgba(ring === 1 ? '#ffcc4d' : col, (0.3 + 0.4 * ap) * (ring === 1 ? 1 : 0.85));
+      x.lineWidth = ring === 1 ? 2.4 : 1.6; x.beginPath(); x.arc(0, 0, (96 + ring * 38) * (0.85 + 0.15 * ap), 0, Math.PI * 2); x.stroke();
+    }
+    x.rotate(t * 0.5);
+    for (i = 0; i < 12; i++) { x.rotate(Math.PI / 6); x.fillStyle = AL.Sprites.rgba('#ffcc4d', 0.55 * ap); x.fillRect(172, -1.5, 14, 3); x.fillRect(150, -1, 4, 2); }
+    x.rotate(-t * 1.1);
+    x.strokeStyle = AL.Sprites.rgba(col, 0.55 * ap); x.lineWidth = 1.4;
+    for (k = 0; k < 2; k++) {
+      x.beginPath();
+      for (j = 0; j < 3; j++) { a = k * Math.PI / 3 + j * 2 * Math.PI / 3 - Math.PI / 2; px = Math.cos(a) * 128; py = Math.sin(a) * 128; if (j === 0) x.moveTo(px, py); else x.lineTo(px, py); }
+      x.closePath(); x.stroke();
+    }
+    x.restore();
+    var p = (t % 1.6) / 1.6;   // 広がる水の波紋
+    x.strokeStyle = AL.Sprites.rgba(col, 0.5 * (1 - p)); x.lineWidth = 2; x.beginPath(); x.arc(210, 210, 60 + p * 150, 0, Math.PI * 2); x.stroke();
+  }
+
+  // 召喚演出。results は Gacha.pull が返した確定済みの結果（魂晶の消費・仲間の追加・履歴・保存は、演出より前に完了している）。
+  // この関数は表示だけを行い、抽選・状態・乱数（U.rng）には触れない。★5 があれば、導入の演出のあとに、★5 ごとのカットインを挟む。
   UI.gachaAnim = function (results, onClose) {
     var best = Math.max.apply(null, results.map(function (r) { return r.rarity; }));
     var col = best === 5 ? '#ffcc4d' : (best === 4 ? '#c58bff' : '#6aa8ff');
+    var fives = results.filter(function (r) { return r.rarity === 5; });
+    var st = UI.st(), low = !!(st && st.settings.effects === 'low');
+    // ★5 のイラストを先に読み込んでおく（カットインで画像の表示が遅れないように）
+    fives.forEach(function (r) { var u = !UI.artBroken[r.id] && D.heroArtUrl(r.id); if (u) { var im = new Image(); im.src = u; } });
     var ov = document.createElement('div');
     ov.className = 'gacha-overlay';
     ov.innerHTML = '<canvas width="420" height="420"></canvas><div class="tiny sub mt">タップでスキップ</div>';
     document.body.appendChild(ov);
     var cv = ov.querySelector('canvas'), x = cv.getContext('2d'), t0 = performance.now(), done = false, raf;
     var parts = [];
+    var stage = 'intro', cutIdx = 0, cutTimer = null, cutRaf = 0, cutStart = 0, cutToken = 0;
     function draw(now) {
       var t = (now - t0) / 1000;
       x.clearRect(0, 0, 420, 420);
@@ -6658,10 +6749,48 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
       parts.forEach(function (q) { q.r -= 3 + p * 6; x.fillStyle = col; x.fillRect(210 + Math.cos(q.a) * q.r, 210 + Math.sin(q.a) * q.r, q.s, q.s); });
       parts = parts.filter(function (q) { return q.r > 5; });
       if (t > 1.4) { var g = x.createRadialGradient(210, 210, 0, 210, 210, 200 * (t - 1.4) * 4); g.addColorStop(0, '#fff'); g.addColorStop(1, AL.Sprites.rgba(col, 0)); x.fillStyle = g; x.fillRect(0, 0, 420, 420); }
-      if (t < 1.75) raf = requestAnimationFrame(draw); else showResults();
+      if (t < 1.75) raf = requestAnimationFrame(draw); else afterIntro();
+    }
+    // 導入が終わったら、★5 があればカットインへ、なければこれまでどおり結果へ
+    function afterIntro() {
+      if (stage !== 'intro') return;
+      cancelAnimationFrame(raf);
+      if (!fives.length) { showResults(); return; }
+      stage = 'cutin'; cutIdx = 0; playCutin(0);
+    }
+    function stopCut() { clearTimeout(cutTimer); cancelAnimationFrame(cutRaf); cutToken++; }
+    function nextCut() {
+      if (stage !== 'cutin') return;
+      stopCut(); cutIdx++;
+      if (cutIdx < fives.length) playCutin(cutIdx); else showResults();
+    }
+    function playCutin(i) {
+      stopCut();
+      var token = cutToken, r = fives[i], hd = D.HEROES[r.id], el = D.ELEMENTS[hd.element] || { color: '#4aa8ff' };
+      var url = !UI.artBroken[r.id] && D.heroArtUrl(r.id);
+      var face = url ? '<div class="gcut-art" data-art-id="' + r.id + '"><img src="' + url + '" alt="' + esc(hd.name) + '" decoding="async" onerror="AL.UI.artFail(this)"></div>'
+        : '<div class="gcut-art sprite" data-art-id="' + r.id + '">' + UI.heroImg(r.id, 160, 'gcut-sprite') + '</div>';
+      ov.innerHTML = '<div class="gcut' + (low ? ' low' : '') + '" style="--c:' + el.color + '">' +
+        '<canvas class="gcut-circle" width="420" height="420"></canvas><div class="gcut-flash"></div>' +
+        '<div class="gcut-card">' + face + '</div>' +
+        '<div class="gcut-info"><div class="gcut-rare">' + UI.stars(5) + '</div><div class="gcut-name">' + esc(hd.name) + '</div>' +
+        '<div class="gcut-tags">' + UI.elemTag(hd.element) + ' ' + UI.roleTag(hd.role) + (r.isNew ? ' <span class="gcut-new">NEW</span>' : '') + '</div>' +
+        '<div class="gcut-sub tiny">' + (r.isNew ? '' : (r.shards ? '欠片+' + r.shards : '限界突破 ' + r.lb)) + '</div></div>' +
+        (fives.length > 1 ? '<div class="gcut-count tiny">' + (i + 1) + ' / ' + fives.length + '</div><button class="btn sm ghost gcut-skipall" data-skipall>すべてスキップ</button>' : '') +
+        '<div class="gcut-hint tiny sub">タップで' + (i + 1 < fives.length ? '次へ' : '結果へ') + '</div></div>';
+      cutStart = performance.now();
+      var c2 = ov.querySelector('.gcut-circle').getContext('2d');
+      function frame(now) {
+        if (token !== cutToken) return;
+        drawCutCircle(c2, (now - cutStart) / 1000, el.color);
+        if (!low) cutRaf = requestAnimationFrame(frame);
+      }
+      if (low) drawCutCircle(c2, 1, el.color); else cutRaf = requestAnimationFrame(frame);
+      cutTimer = setTimeout(function () { if (token === cutToken) nextCut(); }, low ? 1800 : 3000);
     }
     function showResults() {
-      if (done) return; done = true;
+      if (done) return; done = true; stage = 'results';
+      stopCut();
       cancelAnimationFrame(raf);
       ov.innerHTML = '<div class="gacha-results' + (results.length === 1 ? ' one' : '') + '">' + results.map(function (r) {
         var hd = D.HEROES[r.id];
@@ -6672,7 +6801,14 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
       Array.prototype.forEach.call(cards, function (c, i) { setTimeout(function () { c.classList.add('show'); }, 90 * i + 50); });
       ov.querySelector('[data-close]').addEventListener('click', function () { ov.remove(); if (onClose) onClose(); });
     }
-    ov.addEventListener('click', function (e) { if (!done) { e.stopPropagation(); showResults(); } });
+    ov.addEventListener('click', function (e) {
+      if (stage === 'intro') { e.stopPropagation(); afterIntro(); }
+      else if (stage === 'cutin') {
+        e.stopPropagation();
+        if (e.target.closest('[data-skipall]')) showResults();
+        else if (performance.now() - cutStart > 350) nextCut();   // 導入のスキップの直後の連打で、すぐ飛ばされないようにする
+      }
+    });
     raf = requestAnimationFrame(draw);
   };
 })(typeof window !== 'undefined' ? window : globalThis);
