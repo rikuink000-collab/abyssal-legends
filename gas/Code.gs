@@ -29,6 +29,8 @@ var RATE_LIMITS = [
 var LIMITS = { title: 100, detail: 3000, steps: 2000, email: 254, os: 100, browser: 300, version: 20 };
 var TYPES = { bug: 'バグ・不具合', request: '改善要望', other: 'その他' };
 var FREQS = { always: '毎回', sometimes: 'ときどき', once: '一度だけ', unknown: '不明' };
+var STATUS_COL = 12;                     // 対応状況の列（L 列）
+var ROW_GROW = 1000;                     // 行が足りなくなったときに、まとめて増やす行数
 var HEADERS = ['受付日時', '報告ID', '報告種類', 'タイトル', '詳細', '発生頻度', '再現手順', 'ゲームバージョン', 'OS情報', 'ブラウザ情報', '返信先', '対応状況', '管理メモ'];
 var STATUS_DEFAULT = '未対応';
 var STATUS_CHOICES = ['未対応', '対応中', '対応済み', '保留', '対応不要'];
@@ -82,6 +84,7 @@ function doPost(e) {
       v.value.freq ? FREQS[v.value.freq] : '', v.value.steps, v.value.version, v.value.os, v.value.browser, v.value.email, STATUS_DEFAULT, ''
     ].map(safeCell_);
     var r = sheet.getLastRow() + 1;
+    ensureRows_(sheet, r);                                         // 書き込む行がシートの行数を超えないようにする
     var range = sheet.getRange(r, 1, 1, row.length);
     range.setNumberFormat('@');                                    // 数式として解釈させない（文字列として保存）
     range.setValues([row]);
@@ -97,20 +100,37 @@ function doPost(e) {
 
 // ---- 初期設定（スクリプトエディタで1回だけ実行） ----
 
-/** シート「報告」を作り、見出し・対応状況の選択肢を設定します。既にあれば見出しだけ確認します（既存データは消しません） */
+/** シート「報告」を作り、見出し・対応状況の選択肢を設定します。何度実行しても安全です（既存の報告データは消しません）。
+ *  新しいシートの行数（通常 1000 行）や列数が足りなければ、先に増やしてから範囲を指定します。 */
 function setup() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(SHEET_NAME) || ss.insertSheet(SHEET_NAME);
+  if (sheet.getMaxColumns() < HEADERS.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), HEADERS.length - sheet.getMaxColumns());
   if (sheet.getLastRow() === 0) {
     sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight('bold');
     sheet.setFrozenRows(1);
   }
-  var rule = SpreadsheetApp.newDataValidation().requireValueInList(STATUS_CHOICES, true).setAllowInvalid(false).build();
-  sheet.getRange(2, 12, 2000, 1).setDataValidation(rule);
+  applyStatusRule_(sheet);
   return 'OK: ' + sheet.getName();
 }
 
 // ---- 内部 ----
+
+/** 対応状況（L 列）の選択肢を、2 行目から「今のシートの最終行」まで設定する（シートの行数を超えた範囲は指定しない） */
+function applyStatusRule_(sheet) {
+  var maxRows = sheet.getMaxRows();
+  if (maxRows < 2) { sheet.insertRowsAfter(maxRows, 2 - maxRows); maxRows = sheet.getMaxRows(); }
+  var rule = SpreadsheetApp.newDataValidation().requireValueInList(STATUS_CHOICES, true).setAllowInvalid(false).build();
+  sheet.getRange(2, STATUS_COL, maxRows - 1, 1).setDataValidation(rule);
+}
+
+/** 書き込む行 r がシートの行数を超えるときは、先に行を増やす（増やした行にも選択肢を設定する）。排他制御の中で呼ぶ */
+function ensureRows_(sheet, r) {
+  var maxRows = sheet.getMaxRows();
+  if (r <= maxRows) return;
+  sheet.insertRowsAfter(maxRows, Math.max(r - maxRows, ROW_GROW));
+  applyStatusRule_(sheet);
+}
 
 function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);

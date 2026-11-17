@@ -181,23 +181,62 @@ test('requestId はゲームの乱数（U.rng）を使わず、32桁の16進数�
 
 // ---------- ② GAS 側（架空の Google 環境） ----------
 
+// Google のシートの決まりを模した架空のシート：行数・列数（新しいシートは 1000 行 × 26 列）を超える範囲への操作はエラーにする
+// （本物のスプレッドシートも、シートの大きさを超える範囲への書き込み・書式設定でエラーになる仕様。これは仕様の想定であり、本物での確認ではない）
+const HEADERS_JA = ['受付日時', '報告ID', '報告種類', 'タイトル', '詳細', '発生頻度', '再現手順', 'ゲームバージョン', 'OS情報', 'ブラウザ情報', '返信先', '対応状況', '管理メモ'];
+function strictSheet({ maxRows = 1000, maxCols = 26, writeThrows = false } = {}) {
+  const st = { maxRows, maxCols, cells: new Map(), validations: [], frozen: 0, calls: [], headerWrites: 0 };
+  const oob = () => { throw new Error('The coordinates of the range are outside the dimensions of the sheet.'); };
+  const chk = (r, c, nr, nc) => { if (!(r >= 1 && c >= 1 && nr >= 1 && nc >= 1) || r + nr - 1 > st.maxRows || c + nc - 1 > st.maxCols) oob(); };
+  const lastRow = () => { let m = 0; for (const k of st.cells.keys()) m = Math.max(m, +k.split(',')[0]); return m; };
+  const sheet = {
+    getName: () => '報告', getLastRow: lastRow, getMaxRows: () => st.maxRows, getMaxColumns: () => st.maxCols,
+    insertRowsAfter(pos, n) { if (!(pos >= 0 && pos <= st.maxRows && n >= 1)) oob(); st.maxRows += n; },
+    insertColumnsAfter(pos, n) { if (!(pos >= 0 && pos <= st.maxCols && n >= 1)) oob(); st.maxCols += n; },
+    setFrozenRows(n) { st.frozen = n; },
+    getRange(r, c, nr = 1, nc = 1) {
+      return {
+        setNumberFormat(f) { chk(r, c, nr, nc); st.calls.push(['fmt', f, r]); return this; },
+        setFontWeight() { chk(r, c, nr, nc); return this; },
+        setDataValidation(rule) { chk(r, c, nr, nc); st.validations.push({ r, c, nr, nc, rule }); return this; },
+        setValues(v) {
+          chk(r, c, nr, nc);
+          if (v.length !== nr || v[0].length !== nc) throw new Error('The number of rows or columns in the data does not match the range.');
+          if (writeThrows && r > 1) throw new Error('boom: secret-internal-detail');
+          if (r === 1) st.headerWrites++; else st.calls.push(['set', r]);
+          v.forEach((row, i) => row.forEach((x, j) => st.cells.set(`${r + i},${c + j}`, x)));
+          return this;
+        }
+      };
+    }
+  };
+  const rowsOf = () => { const out = []; for (let r = 2; r <= lastRow(); r++) out.push(Array.from({ length: HEADERS_JA.length }, (_, j) => st.cells.get(`${r},${j + 1}`) ?? '')); return out; };
+  return { sheet, st, rowsOf };
+}
+
 function gasEnv(opts = {}) {
-  const rows = [], calls = [], props = new Map(), cache = new Map();
+  const calls = [], props = new Map(), cache = new Map();
   let nowMs = opts.now ?? Date.UTC(2026, 10, 17, 3, 4, 5);   // 2026-11-17 12:04:05 JST
   let lockCalls = 0, releases = 0;
-  const sheet = {
-    getLastRow: () => (opts.lastRow ?? (1 + rows.length)),
-    getRange: (r, c, nr, nc) => ({
-      setNumberFormat(f) { calls.push(['fmt', f, r]); return this; },
-      setValues(v) { if (opts.writeThrows) throw new Error('boom: secret-internal-detail'); calls.push(['set', r]); rows[r - 2] = v[0]; return this; }
-    })
-  };
+  let cur = null;
+  const make = () => strictSheet({ maxRows: opts.maxRows, maxCols: opts.maxCols, writeThrows: opts.writeThrows });
+  if (!opts.noSheet) {
+    cur = make();
+    if (!opts.fresh) cur.sheet.getRange(1, 1, 1, HEADERS_JA.length).setValues([HEADERS_JA]);   // setup() 済みのシート（見出しあり）
+  }
+  const sheetProxy = new Proxy({}, { get: (_, k) => (k === 'getLastRow' && opts.lastRow != null ? () => opts.lastRow : cur.sheet[k]) });
   const RealDate = Date;
   class FakeDate extends RealDate { constructor(...a) { if (a.length === 0) super(nowMs); else super(...a); } static now() { return nowMs; } }
   const sandbox = {
     console: { error() {}, log() {} }, JSON, Math, Object, Array, String, Number, parseInt, Error, RegExp, Date: FakeDate,
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: (t) => ({ text: t, setMimeType() { return this; } }) },
-    SpreadsheetApp: { getActiveSpreadsheet: () => ({ getSheetByName: (n) => (n === '報告' && !opts.noSheet ? sheet : null) }) },
+    SpreadsheetApp: {
+      getActiveSpreadsheet: () => ({
+        getSheetByName: (n) => (n === '報告' && cur ? sheetProxy : null),
+        insertSheet: () => { cur = make(); return sheetProxy; }
+      }),
+      newDataValidation: () => ({ list: null, allowInvalid: null, requireValueInList(l) { this.list = [...l]; return this; }, setAllowInvalid(b) { this.allowInvalid = b; return this; }, build() { return { list: this.list, allowInvalid: this.allowInvalid }; } })
+    },
     LockService: { getScriptLock: () => ({ tryLock: () => { lockCalls++; return opts.lockFails ? false : true; }, releaseLock: () => { releases++; } }) },
     CacheService: { getScriptCache: () => ({ get: (k) => cache.get(k) ?? null, put: (k, v) => { cache.set(k, v); } }) },
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props.get(k) ?? null, setProperty: (k, v) => { props.set(k, v); } }) },
@@ -212,7 +251,10 @@ function gasEnv(opts = {}) {
   const ctx = vm.createContext(sandbox);
   vm.runInContext(GAS_SRC, ctx, { filename: 'gas/Code.gs' });
   const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: typeof body === 'string' ? body : JSON.stringify(body), type: 'text/plain' } }).text);
-  return { ctx, post, rows, calls, props, cache, setNow: (n) => { nowMs = n; }, lock: () => ({ lockCalls, releases }) };
+  return {
+    ctx, post, props, cache, setNow: (n) => { nowMs = n; }, lock: () => ({ lockCalls, releases }),
+    get rows() { return cur.rowsOf(); }, get calls() { return cur.st.calls; }, get st() { return cur.st; }, hasSheet: () => !!cur
+  };
 }
 const rid = (n = 1) => n.toString(16).padStart(32, '0');
 const req = (o = {}) => ({ app: 'abyssal-legends', v: 1, requestId: rid(1), type: 'bug', title: 'タイトル', detail: '詳細です', freq: 'once', steps: '手順', email: 'a@b.co',
@@ -368,3 +410,80 @@ test('GAS のソースに、秘密の値（URL・ID・キー）が入ってい�
   assert.equal(hits, 1, 'index.html の送信先 URL の記述は、コメントの設定例1か所だけ（実際の URL は未設定）');
   assert.match(HTML, /REPORT: \{\s*ENDPOINT: '',/);
 });
+
+// ---------- setup()（初期設定）と、シートの行数 ----------
+
+test('GAS setup()：新しいシート（1000行×26列）でもエラーにならず、見出し・凍結・対応状況の選択肢を設定する', () => {
+  const g = gasEnv({ noSheet: true });
+  assert.equal(g.hasSheet(), false);
+  assert.equal(g.ctx.setup(), 'OK: 報告');
+  const { st } = g;
+  assert.equal(st.maxRows, 1000, '新しいシートの行数は 1000 行のまま（増やす必要がなければ増やさない）');
+  assert.deepEqual(HEADERS_JA.map((_, j) => st.cells.get(`1,${j + 1}`)), HEADERS_JA);
+  assert.equal(st.frozen, 1);
+  assert.equal(st.validations.length, 1);
+  const v = st.validations[0];
+  assert.deepEqual([v.r, v.c, v.nr, v.nc], [2, 12, 999, 1], 'L 列の 2〜1000 行目（シートの大きさを超えない）');
+  assert.ok(v.r + v.nr - 1 <= st.maxRows);
+  assert.deepEqual(plain(v.rule.list), ['未対応', '対応中', '対応済み', '保留', '対応不要']);
+  assert.equal(v.rule.allowInvalid, false);
+});
+
+test('GAS setup()：何度実行しても安全（見出しは1度だけ・既存の報告は消えない）。途中まで済んでいても再実行できる', () => {
+  const g = gasEnv({ fresh: true });          // シートはあるが見出しがまだない
+  g.ctx.setup(); g.ctx.setup();
+  assert.equal(g.st.headerWrites, 1, '見出しを書くのは空のときだけ');
+  for (let i = 0; i < 3; i++) { g.setNow(Date.UTC(2026, 10, 17, 3, 0, 0) + i * 120_000); assert.equal(g.post(req({ requestId: rid(500 + i), title: 'T' + i })).ok, true); }
+  const before = JSON.stringify(g.rows);
+  g.ctx.setup(); g.ctx.setup();
+  assert.equal(JSON.stringify(g.rows), before, 'setup() を再実行しても報告データは変わらない');
+  assert.equal(g.rows.length, 3);
+  assert.equal(g.st.headerWrites, 1);
+  for (const v of g.st.validations) assert.ok(v.r + v.nr - 1 <= g.st.maxRows && v.c + v.nc - 1 <= g.st.maxCols, '範囲がシートの大きさを超えている');
+  // 途中まで：シートだけ作られて止まった状態（見出しなし）から
+  const h = gasEnv({ noSheet: true });
+  h.ctx.setup();                              // シートを作る
+  assert.equal(h.ctx.setup(), 'OK: 報告');    // 2回目も成功する
+  // 見出しだけ書かれて選択肢がない状態から
+  const k = gasEnv();                         // 見出しあり・選択肢なし
+  assert.equal(k.st.validations.length, 0);
+  k.ctx.setup();
+  assert.equal(k.st.validations.length, 1);
+  assert.equal(k.st.headerWrites, 1, '見出しがある場合は書き直さない');
+});
+
+test('GAS setup()：行数・列数が足りない小さなシートでも、先に増やしてから範囲を指定する', () => {
+  const tiny = gasEnv({ noSheet: true, maxRows: 1, maxCols: 5 });
+  assert.equal(tiny.ctx.setup(), 'OK: 報告');
+  assert.ok(tiny.st.maxRows >= 2 && tiny.st.maxCols >= 13);
+  const v = tiny.st.validations[0];
+  assert.ok(v.r + v.nr - 1 <= tiny.st.maxRows, '選択肢の範囲がシートの行数を超えている');
+  assert.equal(tiny.st.cells.get('1,13'), '管理メモ');
+});
+
+test('GAS：報告がシートの行数（1000行）を超えて増えても、行を増やして保存を続け、増えた行にも対応状況の選択肢を設定する', () => {
+  const g = gasEnv({ maxRows: 6 });            // 見出し1行 + 報告5件で満杯のシート（本物は 1000 行。小さくして同じ状況を作る）
+  const ids = new Set();
+  for (let i = 0; i < 12; i++) {
+    g.setNow(Date.UTC(2026, 10, 17, 3, 0, 0) + i * 120_000 * 30);
+    const r = g.post(req({ requestId: rid(900 + i), title: 'T' + i }));
+    assert.equal(r.ok, true, `報告 ${i + 1} 件目: ${JSON.stringify(r)}`);
+    ids.add(r.id);
+  }
+  assert.equal(g.rows.length, 12);
+  assert.equal(ids.size, 12);
+  assert.ok(g.st.maxRows >= 13, '行が増えている');
+  assert.deepEqual(plain(g.rows.map((r) => r[3])), Array.from({ length: 12 }, (_, i) => 'T' + i));
+  const covered = (row) => g.st.validations.some((v) => v.c === 12 && row >= v.r && row <= v.r + v.nr - 1);
+  for (let row = 2; row <= 13; row++) assert.ok(covered(row), `${row} 行目の対応状況に選択肢がない`);
+  assert.deepEqual(g.lock(), { lockCalls: 12, releases: 12 });
+});
+
+test('GAS：シートの大きさの決まりの想定（旧コードの「2〜2001行目」の指定は、1000行のシートではエラーになる）', () => {
+  const g = gasEnv({ noSheet: true });
+  g.ctx.setup();
+  const sheet = vm_sheet(g);
+  assert.throws(() => sheet.getRange(2, 12, 2000, 1).setDataValidation({}), /outside the dimensions/);
+  assert.doesNotThrow(() => sheet.getRange(2, 12, sheet.getMaxRows() - 1, 1).setDataValidation({}));
+});
+function vm_sheet(g) { return g.ctx.SpreadsheetApp.getActiveSpreadsheet().getSheetByName('報告'); }
