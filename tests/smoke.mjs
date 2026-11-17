@@ -35,6 +35,9 @@ before(async () => {
     if (path === '/' || path === '/index.html') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
       res.end(HTML);
+    } else if (/^\/assets\/heroes\/h\d{2}\.webp$/.test(path)) {
+      try { res.writeHead(200, { 'content-type': 'image/webp', 'cache-control': 'no-store' }); res.end(readFileSync(new URL(`..${path}`, import.meta.url))); }
+      catch { res.writeHead(404); res.end(); }
     } else if (path === '/__blank') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end('<!doctype html><title>blank</title>');
@@ -2186,10 +2189,229 @@ test('報告機能が使えなくても（未設定・通信不能・fetch な�
   } finally { await context.close(); }
 });
 
-test('GitHub Pages の公開対象が index.html・README.md・og-image.png（共有時のリンクカード画像）だけである', () => {
+// ---------- 仲間のイラスト（詳細画面）と ★5 カットイン ----------
+const ART_FIVE = (id, extra = {}) => ({ id, rarity: 5, pity: false, isNew: true, lb: 0, shards: 0, ...extra });
+
+async function artSetup(page, w = 390) {
+  await page.setViewportSize({ width: w, height: 780 });
+  await boot(page);
+  await startAsVeteran(page);
+  await page.evaluate(() => { AL.Game.paused = true; AL.Heroes.add(AL.Game.state, 'h06'); AL.Heroes.add(AL.Game.state, 'h03'); });
+}
+const watchCuts = (page) => page.evaluate(() => {
+  window.__cuts = []; window.__overlays = 0;
+  new MutationObserver(() => {
+    const n = document.querySelector('.gcut-name'); if (n && window.__cuts[window.__cuts.length - 1] !== n.textContent) window.__cuts.push(n.textContent);
+    window.__overlays = Math.max(window.__overlays, document.querySelectorAll('.gacha-overlay').length);
+  }).observe(document.body, { subtree: true, childList: true, characterData: true });
+});
+
+test('仲間詳細（360px・390px）：h06 はイラストを縦横比のまま表示し、能力値・スキル・限界突破・装備は従来どおり。未登録の仲間は従来のドット絵', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await artSetup(page);
+    for (const width of [390, 360]) {
+      await page.setViewportSize({ width, height: 780 });
+      await page.evaluate(() => { AL.UI.closeModal(); AL.UI.heroDetail('h06'); });
+      await page.waitForSelector('#modal-root .hero-art img');
+      await page.waitForFunction(() => { const i = document.querySelector('#modal-root .hero-art img'); return i && i.complete && i.naturalWidth > 0; });
+      const m = await page.evaluate(() => {
+        const i = document.querySelector('#modal-root .hero-art img'), b = document.querySelector('#modal-root .hero-art').getBoundingClientRect(), r = i.getBoundingClientRect();
+        const body = document.querySelector('#modal-root .modal-body');
+        return { src: i.getAttribute('src'), nat: [i.naturalWidth, i.naturalHeight], box: [b.width, b.height], img: [r.width, r.height], left: b.left, right: b.right, W: innerWidth, sw: document.documentElement.scrollWidth, text: body.innerText, hasSprite: !!document.querySelector('#modal-root img.hero-big') };
+      });
+      assert.equal(m.src, 'assets/heroes/h06.webp?v=1');
+      assert.deepEqual(m.nat, [1024, 1536]);
+      assert.ok(Math.abs(m.box[0] / m.box[1] - 2 / 3) < 0.02, `${width}px：枠の縦横比が 2:3 ではありません（${m.box}）`);
+      assert.ok(Math.abs(m.img[0] / m.img[1] - 2 / 3) < 0.02, `${width}px：画像の縦横比が崩れています（${m.img}）`);
+      assert.ok(m.left >= 0 && m.right <= m.W && m.sw <= m.W, `${width}px：イラストが画面からはみ出しています`);
+      assert.equal(m.hasSprite, false, 'イラストとドット絵が両方出ています');
+      for (const word of ['深淵潮の魔導師メルヴィナ', '能力値', '攻撃力', 'スキル「大海嘯」', 'レベルアップ', '限界突破', '装備']) assert.ok(m.text.includes(word) || (await page.textContent('#modal-root .modal-body')).includes(word), `詳細画面に「${word}」がありません`);
+      await page.screenshot({ path: `${SHOTS}/phone-heroart-detail-${width}.png` });
+    }
+    // 未登録の仲間（h03：★5 だがイラスト未登録）は、従来のドット絵
+    await page.evaluate(() => { AL.UI.closeModal(); AL.UI.heroDetail('h03'); });
+    await page.waitForSelector('#modal-root img.hero-big');
+    assert.equal(await page.locator('#modal-root .hero-art').count(), 0);
+    assert.match(await page.getAttribute('#modal-root img.hero-big', 'src'), /^data:image\/png/);
+    // 他の画面のドット絵（UI.heroImg）は変わらない
+    assert.match(await page.evaluate(() => AL.UI.heroImg('h06', 64)), /src="data:image\/png/);
+    await page.evaluate(() => { AL.UI.closeModal(); AL.UI.show('heroes'); });
+    assert.equal(await page.locator('#screen .hero-art').count(), 0, '仲間一覧にイラストが出ています（詳細画面だけのはず）');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('仲間詳細：イラストをタップすると拡大表示（閉じられる）。画像の読み込みに失敗しても画面は壊れず、ドット絵に戻り、同じ画像を取りに行き続けない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await artSetup(page);
+    await page.evaluate(() => AL.UI.heroDetail('h06'));
+    await page.waitForSelector('#modal-root .hero-art img');
+    await page.click('#modal-root .hero-art');
+    await page.waitForSelector('#modal-root .hero-art-full img');
+    assert.equal(await page.locator('#modal-root .backdrop').count(), 2, '拡大表示が、詳細の上に重なっていない');
+    await page.evaluate(() => AL.UI.closeModal('heroart'));
+    assert.equal(await page.locator('#modal-root .backdrop').count(), 1);
+    // 読み込み失敗
+    await page.evaluate(() => { AL.UI.closeModal(); });
+    let hits = 0;
+    await page.route('**/assets/heroes/h06.webp*', (route) => { hits++; route.abort('failed'); });
+    await page.evaluate(() => { AL.UI.artBroken = {}; AL.UI.heroDetail('h06'); });
+    await page.waitForSelector('#modal-root img.hero-big', { timeout: 8000 });
+    assert.equal(await page.locator('#modal-root .hero-art').count(), 0, '失敗したのにイラストの枠が残っています');
+    const txt = await page.textContent('#modal-root .modal-body');
+    for (const w of ['能力値', 'スキル「大海嘯」', 'レベルアップ', '装備']) assert.ok(txt.includes(w), `失敗時に「${w}」が消えました`);
+    await page.evaluate(() => { AL.UI.closeModal(); AL.UI.heroDetail('h06'); });
+    await page.waitForSelector('#modal-root img.hero-big');
+    assert.equal(hits, 1, '失敗した画像を、開くたびに取りに行っています');
+    assert.deepEqual(errors.filter((e) => !/Failed to load resource|net::ERR/.test(e)), []);
+  } finally { await context.close(); }
+});
+
+test('★5 カットイン：★5 のときだけ出て、★4・★3 は従来どおり。イラスト・名前・属性・NEW を表示し、自動で結果へ進み、結果の画面は従来どおり', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await artSetup(page);
+    await watchCuts(page);
+    // ★4 だけ：カットインは出ない
+    await page.evaluate(() => AL.UI.gachaAnim([{ id: 'h24', rarity: 4, pity: false, isNew: true, lb: 0, shards: 0 }]));
+    await page.waitForSelector('.gacha-overlay [data-close]', { timeout: 10000 });
+    assert.equal(await page.evaluate(() => window.__cuts.length), 0, '★4 でカットインが出ました');
+    await page.click('.gacha-overlay [data-close]');
+    // ★5（イラストあり）
+    await page.evaluate((r) => AL.UI.gachaAnim([r]), ART_FIVE('h06'));
+    await page.waitForSelector('.gcut', { timeout: 8000 });
+    await page.waitForSelector('.gcut-art img', { timeout: 4000 });
+    const c = await page.evaluate(() => ({ name: document.querySelector('.gcut-name').textContent, src: document.querySelector('.gcut-art img').getAttribute('src'), text: document.querySelector('.gcut').innerText, hint: document.querySelector('.gcut-hint').textContent, skipAll: !!document.querySelector('[data-skipall]') }));
+    assert.equal(c.name, '深淵潮の魔導師メルヴィナ'); assert.equal(c.src, 'assets/heroes/h06.webp?v=1');
+    assert.ok(c.text.includes('水') && c.text.includes('魔法アタッカー') && c.text.includes('NEW'));
+    assert.equal(c.skipAll, false, '★5 が1体のとき「すべてスキップ」は出さない');
+    await page.waitForSelector('.gacha-overlay [data-close]', { timeout: 10000 });   // 自動で結果へ
+    assert.match(await page.textContent('.gacha-overlay'), /深淵潮の魔導師メルヴィナ/);
+    assert.equal(await page.locator('.gacha-overlay .gres.r5').count(), 1);
+    await page.click('.gacha-overlay [data-close]');
+    assert.equal(await page.locator('.gacha-overlay').count(), 0);
+    // ★5（イラスト未登録）：ドット絵で代わりに表示する
+    await page.evaluate((r) => AL.UI.gachaAnim([r]), ART_FIVE('h03', { isNew: false, lb: 2 }));
+    await page.waitForSelector('.gcut .gcut-art.sprite', { timeout: 8000 });
+    assert.ok((await page.textContent('.gcut')).includes('限界突破 2'));
+    await page.waitForSelector('.gacha-overlay [data-close]', { timeout: 10000 }); await page.click('.gacha-overlay [data-close]');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('★5 カットイン：10連で★5が複数でも順番にすべて表示し、スキップ（タップ・すべてスキップ・導入の直後の連打）が効き、結果の10件は欠けない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await artSetup(page);
+    await watchCuts(page);
+    const ten = (ids) => ids.map((id, i) => ({ id, rarity: ['h06', 'h03'].includes(id) ? 5 : 3, pity: false, isNew: i % 2 === 0, lb: 0, shards: 0 }));
+    const IDS = ['h25', 'h06', 'h26', 'h27', 'h28', 'h03', 'h29', 'h30', 'h31', 'h32'];
+    // 1) 自動で進む：2体の★5が、結果の並びの順に出る
+    await page.evaluate((r) => AL.UI.gachaAnim(r), ten(IDS));
+    await page.waitForSelector('.gacha-overlay [data-close]', { timeout: 14000 });
+    assert.deepEqual(await page.evaluate(() => window.__cuts), ['深淵潮の魔導師メルヴィナ', '星喰いの魔女ノクティア'], '★5 の表示順');
+    assert.equal(await page.locator('.gacha-overlay .gres').count(), 10, '結果の10件が欠けています');
+    assert.equal(await page.locator('.gacha-overlay .gres.r5').count(), 2);
+    assert.equal(await page.evaluate(() => window.__overlays), 1, '演出が二重に表示されました');
+    await page.click('.gacha-overlay [data-close]');
+    // 2) タップで進める：導入をタップ → 1体目 →（少し待って）タップ → 2体目 → タップ → 結果。「すべてスキップ」は2体のときだけ
+    await page.evaluate(() => { window.__cuts = []; }); await page.evaluate((r) => AL.UI.gachaAnim(r), ten(IDS));
+    await page.waitForSelector('.gacha-overlay canvas'); await page.mouse.click(195, 400);               // 導入をスキップ
+    await page.waitForSelector('.gcut'); assert.equal(await page.locator('[data-skipall]').count(), 1);
+    await page.mouse.click(195, 400); await page.waitForTimeout(100);                                    // 直後の連打は無視される
+    assert.equal(await page.evaluate(() => window.__cuts.length), 1, '導入のスキップの直後の連打で、カットインが飛ばされました');
+    await page.waitForTimeout(450); await page.mouse.click(195, 400);                                   // 次へ
+    await page.waitForFunction(() => window.__cuts.length === 2);
+    await page.waitForTimeout(450); await page.mouse.click(195, 400);                                   // 結果へ
+    await page.waitForSelector('.gacha-overlay [data-close]', { timeout: 3000 });
+    assert.equal(await page.locator('.gacha-overlay .gres').count(), 10); await page.click('.gacha-overlay [data-close]');
+    // 3) すべてスキップ：1体目の途中で、すぐ結果へ。結果は同じ
+    await page.evaluate(() => { window.__cuts = []; }); await page.evaluate((r) => AL.UI.gachaAnim(r), ten(IDS));
+    await page.mouse.click(195, 400); await page.waitForSelector('[data-skipall]'); await page.click('[data-skipall]');
+    await page.waitForSelector('.gacha-overlay [data-close]', { timeout: 3000 });
+    assert.equal(await page.evaluate(() => window.__cuts.length), 1, 'すべてスキップのあとに、次のカットインが出ました');
+    assert.equal(await page.locator('.gacha-overlay .gres').count(), 10);
+    await page.waitForTimeout(3500);   // 取り消したタイマーが、あとから動かない
+    assert.equal(await page.locator('.gacha-overlay .gres').count(), 10); assert.equal(await page.locator('.gcut').count(), 0);
+    await page.click('.gacha-overlay [data-close]'); assert.equal(await page.locator('.gacha-overlay').count(), 0);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('★5 カットイン：実際のガチャ操作で、連打しても1回しか引かれず、演出のあとの状態が演出なしの場合と一致する。演出はゲームの乱数に触れない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await artSetup(page);
+    // 天井（★5確定）の状態にして、画面のボタンから引く
+    await page.evaluate(() => { const s = AL.Game.state; s.gacha.pity.standard = 89; s.gacha.pity.pickup = 89; s.currency.crystals = 5000; AL.UI.show('gacha'); AL.U.setSeed(31); });
+    const before = await page.evaluate(() => ({ cr: AL.Game.state.currency.crystals, h: AL.Game.state.gacha.history.length, tot: AL.Game.state.gacha.total }));
+    await page.locator('[data-act="pull"][data-n="1"]').dblclick();                                 // 連打（2回目は演出の上に当たる）
+    await page.waitForSelector('.gacha-overlay');
+    const after = await page.evaluate(() => ({ cr: AL.Game.state.currency.crystals, h: AL.Game.state.gacha.history.length, tot: AL.Game.state.gacha.total, top: AL.Game.state.gacha.history[0] }));
+    assert.deepEqual([before.cr - after.cr, after.h - before.h, after.tot - before.tot], [100, 1, 1], '連打で2回引かれました');
+    assert.equal(after.top.rarity, 5);
+    await page.waitForSelector('.gacha-overlay [data-close]', { timeout: 14000 });
+    const done = await page.evaluate(() => ({ cr: AL.Game.state.currency.crystals, h: AL.Game.state.gacha.history.length, tot: AL.Game.state.gacha.total }));
+    assert.deepEqual(done, { cr: after.cr, h: after.h, tot: after.tot }, '演出の間に状態が変わりました');
+    await page.click('.gacha-overlay [data-close]');
+    // 演出が、ゲームの乱数（シード固定）を進めない：演出を挟んでも、次の乱数が同じ
+    const seq = await page.evaluate(async () => {
+      AL.U.setSeed(77); const a = [AL.U.rng(), AL.U.rng(), AL.U.rng()];
+      AL.U.setSeed(77); AL.UI.gachaAnim([{ id: 'h06', rarity: 5, pity: false, isNew: true, lb: 0, shards: 0 }]);
+      for (let i = 0; i < 200 && !document.querySelector('.gcut'); i++) await new Promise((r) => setTimeout(r, 50));   // カットインの描画まで進める
+      await new Promise((r) => setTimeout(r, 500)); const b = [AL.U.rng(), AL.U.rng(), AL.U.rng()];
+      document.querySelectorAll('.gacha-overlay').forEach((e) => e.remove()); AL.U.setSeed(null);
+      return { a, b };
+    });
+    assert.deepEqual(seq.b, seq.a, '演出がゲームの乱数を進めています');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('★5 カットイン（360px・390px・演出の品質「低」）：画面内に収まり、「低」では静止して短く、読み込み失敗でもドット絵で表示する（スクリーンショット）', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await artSetup(page);
+    for (const width of [390, 360]) {
+      await page.setViewportSize({ width, height: 780 });
+      await page.evaluate((r) => AL.UI.gachaAnim([r]), ART_FIVE('h06'));
+      await page.waitForSelector('.gcut-art img'); await page.waitForTimeout(1300);
+      const m = await page.evaluate(() => {
+        const W = innerWidth, H = innerHeight, bad = [];
+        for (const e of document.querySelectorAll('.gcut-card, .gcut-info, .gcut-hint, .gcut-name')) { const r = e.getBoundingClientRect(); if (r.left < -0.5 || r.right > W + 0.5 || r.top < -0.5 || r.bottom > H + 0.5) bad.push(e.className); }
+        const c = document.querySelector('.gcut-card').getBoundingClientRect();
+        return { bad, ratio: c.width / c.height, sw: document.documentElement.scrollWidth, W };
+      });
+      assert.deepEqual(m.bad, [], `${width}px：画面からはみ出す要素があります`);
+      assert.ok(Math.abs(m.ratio - 2 / 3) < 0.02, `${width}px：カードの縦横比（${m.ratio}）`); assert.ok(m.sw <= m.W);
+      await page.screenshot({ path: `${SHOTS}/phone-cutin-${width}.png` });
+      await page.waitForSelector('.gacha-overlay [data-close]', { timeout: 10000 }); await page.click('.gacha-overlay [data-close]');
+    }
+    // 品質「低」：静止して、短い（約1.8秒）
+    await page.evaluate(() => { AL.Game.state.settings.effects = 'low'; });
+    await page.evaluate((r) => AL.UI.gachaAnim([r]), ART_FIVE('h06'));
+    await page.waitForSelector('.gcut.low', { timeout: 8000 });
+    const t0 = Date.now(); await page.waitForSelector('.gacha-overlay [data-close]', { timeout: 6000 });
+    assert.ok(Date.now() - t0 < 2600, '品質「低」のカットインが長すぎます'); await page.click('.gacha-overlay [data-close]');
+    await page.evaluate(() => { AL.Game.state.settings.effects = 'high'; });
+    // 読み込み失敗：ドット絵で表示し、止まらない
+    await page.route('**/assets/heroes/h06.webp*', (route) => route.abort('failed'));
+    await page.evaluate(() => { AL.UI.artBroken = {}; });
+    await page.evaluate((r) => AL.UI.gachaAnim([r]), ART_FIVE('h06'));
+    await page.waitForSelector('.gcut .gcut-art.sprite img', { timeout: 8000 });
+    await page.waitForSelector('.gacha-overlay [data-close]', { timeout: 10000 }); await page.click('.gacha-overlay [data-close]');
+    assert.deepEqual(errors.filter((e) => !/Failed to load resource|net::ERR/.test(e)), []);
+  } finally { await context.close(); }
+});
+
+test('GitHub Pages の公開対象が index.html・README.md・og-image.png と、仲間のイラスト（assets/heroes/h??.webp）だけである', () => {
   const published = trackedFiles().filter((f) => isPublished(f, pagesExcludes())).sort();
-  assert.deepEqual(published, ['README.md', 'index.html', 'og-image.png'],
+  const heroArt = published.filter((f) => /^assets\/heroes\/h\d{2}\.webp$/.test(f));
+  assert.deepEqual(published.filter((f) => !heroArt.includes(f)), ['README.md', 'index.html', 'og-image.png'],
     '公開サイトに開発用のファイルが出ます。公開しないファイルは _config.yml の exclude に追加してください');
+  assert.ok(heroArt.length >= 1, '仲間のイラスト（assets/heroes/h??.webp）が公開対象になっていません');
 });
 
 test('テスト用セーブは合成データで、実際のセーブ書き出しファイルがリポジトリに含まれていない', () => {
