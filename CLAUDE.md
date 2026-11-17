@@ -98,8 +98,8 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
   **ゲームの状態（`AL.Game.state`）・セーブ・戦闘・乱数（`U.rng`）には触れない。** フォームを開く・閉じるだけでセーブは変わらない（`tests/report.test.mjs` がソースの参照を、`tests/smoke.mjs` がセーブの不変を確認する）。
   セーブへの影響は A（セーブの項目・保存キー・`SAVE_VERSION` は変えない）。
 - 送るのは、入力内容とバージョン（`AL.CONFIG.GAME_VERSION`）・OS・ブラウザ情報だけ。**セーブデータ・所持品・進行状況は送らない**（項目を増やすときはユーザーに相談する）。
-- 送信先は `AL.CONFIG.REPORT.ENDPOINT` の1か所だけ。**未設定（空）のままにしておき、仮の URL を入れない。** `https://script.google.com/macros/s/…/exec` 以外は送らない。
-  URL を設定してよいのは、ユーザーが自分の Google アカウントでデプロイした URL を教えてくれたときだけ。
+- 送信先は `AL.CONFIG.REPORT.ENDPOINT` の1か所だけ（ユーザーがデプロイした Google Apps Script のウェブアプリ URL。`https://script.google.com/macros/s/…/exec` 以外は送らない）。
+  **仮の URL を入れない。** 変えてよいのは、ユーザーが自分の Google アカウントでデプロイした URL を教えてくれたときだけ。転送先の一時的な URL（`googleusercontent`・`user_content_key`）や `/dev` は使わない。
 - 受付側は `gas/Code.gs`（Google Apps Script）。手順書は `gas/SETUP.md`。`gas/` は `_config.yml` の `exclude` に入れ、公開しない。ソースに URL・ID・キーを書かない。
   文字数の上限・種類・列構成はゲーム側と同じ値にする（`tests/report.test.mjs` が一致を確認する）。
 - 入力内容は HTML として解釈しない（`esc()` と `value` で扱う）。スプレッドシートでは `= + - @` で始まる文字を無害化する。

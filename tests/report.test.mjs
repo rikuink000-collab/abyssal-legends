@@ -70,7 +70,8 @@ test('送信先の検証：Google Apps Script のウェブアプリ（https の 
   for (const bad of ['', null, undefined, 'http://script.google.com/macros/s/AKfycbxTESTTEST12345/exec', 'https://evil.example.com/macros/s/AKfycbxTESTTEST12345/exec',
     'https://script.google.com.evil.com/macros/s/AKfycbxTESTTEST12345/exec', 'https://script.google.com/macros/s/AKfycbxTESTTEST12345/dev', 'https://script.google.com/macros/s/AKfycbxTESTTEST12345/exec?x=1',
     'https://script.google.com/macros/s/short/exec', 'javascript:alert(1)']) assert.equal(R.endpointOk(bad), false, String(bad));
-  assert.equal(AL.CONFIG.REPORT.ENDPOINT, '', '仮の URL を本番として入れていない（未設定）');
+  assert.equal(R.configured(), true, '設定済みの送信先が、正規の形として受け付けられる');
+  AL.CONFIG.REPORT.ENDPOINT = '';    // 以降は「未設定」の動作を確かめる（このテストの中だけ）
   assert.equal(R.configured(), false);
   let called = 0;
   const r = await R.send({}, { fetch: () => { called++; return resp({}); } });
@@ -404,11 +405,19 @@ test('GAS と ゲームの設定が一致している（文字数の上限・種
   }
 });
 
-test('GAS のソースに、秘密の値（URL・ID・キー）が入っていない。送信先はゲームの設定箇所1か所だけ', () => {
+test('GAS のソースに、秘密の値（URL・ID・キー）が入っていない。ゲームの送信先は index.html の設定箇所1か所だけで、正規の形式', () => {
   assert.equal(/AKfycb|https?:\/\/|[0-9A-Za-z_-]{44}/.test(GAS_SRC), false, 'GAS のソースに URL や ID が書かれています');
-  const hits = [...HTML.matchAll(/script\.google\.com\/macros/g)].length;
-  assert.equal(hits, 1, 'index.html の送信先 URL の記述は、コメントの設定例1か所だけ（実際の URL は未設定）');
-  assert.match(HTML, /REPORT: \{\s*ENDPOINT: '',/);
+  const { AL } = game();
+  const url = AL.CONFIG.REPORT.ENDPOINT;
+  assert.match(url, /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]{20,}\/exec$/, '設定された送信先が、ウェブアプリ URL（…/macros/s/…/exec）の形ではありません');
+  assert.equal(AL.Report.endpointOk(url), true);
+  assert.equal(AL.Report.configured(), true);
+  assert.equal(/googleusercontent|user_content_key|\/echo|\/dev$|\?/.test(url), false, '転送先の一時的な URL や開発用 URL が設定されています');
+  assert.equal(HTML.split(url).length - 1, 1, '送信先 URL の記述は index.html の設定箇所1か所だけ');
+  assert.match(HTML, new RegExp(`REPORT: \\{\\s*ENDPOINT: '${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}',`), 'AL.CONFIG.REPORT.ENDPOINT に設定されていない');
+  // 送信先として使う URL は、GAS 側のファイル・テスト用の URL と別物（テスト用の仮 URL を本番に入れていない）
+  assert.notEqual(url, URL_OK);
+  assert.equal(/TEST/.test(url), false);
 });
 
 // ---------- setup()（初期設定）と、シートの行数 ----------

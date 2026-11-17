@@ -600,9 +600,9 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
 
     // ---- 不具合・ご意見の報告（js/core/report.js） ----
     // ENDPOINT：Google Apps Script のウェブアプリ URL（https://script.google.com/macros/s/…/exec）をここに設定します。
-    // 空のままだと、報告フォームは開けますが送信できません（設定手順は gas/SETUP.md）。
+    // 空にすると、報告フォームは開けますが送信できません（設定手順は gas/SETUP.md）。
     REPORT: {
-      ENDPOINT: '',
+      ENDPOINT: 'https://script.google.com/macros/s/AKfycbwVde2e3iy3Ew7qkG6VK4WkSDNZvlnRfQjSVwEwJTwRfDQb_f7Y3_efqyMF-teGdnQrbg/exec',
       TIMEOUT_MS: 15000,              // 応答を待つ時間（ミリ秒）
       COOLDOWN_SEC: 60                // 送信に成功してから、次に送れるまでの間隔（秒）
     },

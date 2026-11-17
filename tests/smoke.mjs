@@ -1922,6 +1922,7 @@ test('報告フォーム：設定画面の入口から開閉でき、開く・�
   try {
     await boot(page);
     await startAsVeteran(page);
+    await page.evaluate(() => { AL.CONFIG.REPORT.ENDPOINT = ''; });   // 未設定のときの表示を確かめる（設定済みの本番 URL を一時的に空にする。このページの中だけ）
     await page.evaluate(() => { AL.Game.paused = true; AL.UI.show('settings'); AL.Game.save(); });
     const snap = () => page.evaluate(([a, b]) => ({ main: localStorage.getItem(a), backup: localStorage.getItem(b), keys: Object.keys(localStorage).sort(), st: JSON.stringify(AL.Game.state) }), [SAVE_KEY, BACKUP_KEY]);
     const before = await snap();
