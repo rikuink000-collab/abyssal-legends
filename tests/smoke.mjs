@@ -2109,6 +2109,55 @@ test('報告フォーム：通信エラー・サーバーの異常・受付エ�
   } finally { await context.close(); }
 });
 
+test('報告フォーム：閉じて開き直しても入力欄と内部の下書きが一致し、空の入力欄から古い内容が送られない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await openReport(page);
+    const seen = await fakeServer(page, okReply('BR-20261117-0100'));
+    const KEYS = ['type', 'title', 'detail', 'freq', 'steps', 'email'];
+    const state = () => page.evaluate((ks) => ({ form: ks.map((k) => document.querySelector('#rf-' + k).value), draft: ks.map((k) => (AL.Report.draft ? AL.Report.draft[k] : null)) }), KEYS);
+    await fillReport(page, { type: 'bug', title: '途中のタイトル', detail: '書きかけの詳細', freq: 'once', steps: '手順メモ', email: 'me@example.com' });
+    const a = await state();
+    assert.deepEqual(a.form, a.draft, '入力中は入力欄と下書きが一致する');
+    // 送信せずに閉じて、開き直す：入力欄に前回の内容が戻り、下書きと一致する
+    await page.click('.modal-close');
+    await page.click('#open-report');
+    await page.waitForSelector('#rf-title');
+    const b = await state();
+    assert.deepEqual(b.form, ['bug', '途中のタイトル', '書きかけの詳細', 'once', '手順メモ', 'me@example.com'], '開き直しても入力欄に前回の内容が戻っていない');
+    assert.deepEqual(b.draft, b.form, '開き直したあとの入力欄と下書きが食い違っている');
+    assert.equal(await page.locator('[data-count="title"]').innerText(), '7 / 100', '文字数の表示も戻る');
+    // 入力欄を空にして確認へ進むと、古い内容で通らず、必須のエラーになる（何も送られない）
+    await page.fill('#rf-title', ''); await page.fill('#rf-detail', '');
+    await page.click('#rf-next');
+    assert.match(await page.locator('[data-err="title"]').innerText(), /タイトルを入力/);
+    assert.match(await page.locator('[data-err="detail"]').innerText(), /詳細を入力/);
+    assert.equal(await page.locator('#rf-send').count(), 0, '空の入力欄のまま確認画面に進んだ');
+    assert.deepEqual((await state()).draft.slice(1, 3), ['', ''], '空にした欄の下書きが古いまま残っている');
+    // 自動入力などで input イベントが来ない値でも、見えている内容が確認画面・送信内容になる
+    await page.evaluate(() => { document.querySelector('#rf-title').value = '自動入力のタイトル'; document.querySelector('#rf-detail').value = '自動入力の詳細'; });
+    await page.click('#rf-next');
+    await page.waitForSelector('#rf-send');
+    const sum = await page.locator('.rf-sums').innerText();
+    assert.ok(sum.includes('自動入力のタイトル') && sum.includes('自動入力の詳細'), '見えている内容が確認画面に出ていない');
+    assert.ok(!sum.includes('途中のタイトル') && !sum.includes('書きかけの詳細'), '古い内容が確認画面に混ざっている');
+    // 確認画面から戻って閉じ、開き直しても一致している。送ると、見えていた内容だけが送られる
+    await page.click('#rf-back'); await page.click('.modal-close'); await page.click('#open-report'); await page.waitForSelector('#rf-title');
+    const c = await state();
+    assert.equal(c.form[1], '自動入力のタイトル'); assert.deepEqual(c.draft, c.form);
+    await page.click('#rf-next'); await page.click('#rf-send'); await page.waitForSelector('#rf-done');
+    assert.equal(seen.length, 1);
+    const body = JSON.parse(seen[0].body);
+    assert.deepEqual([body.title, body.detail, body.steps, body.email], ['自動入力のタイトル', '自動入力の詳細', '手順メモ', 'me@example.com']);
+    // 送信に成功したら下書きは消え、開き直すと空
+    await page.click('[data-act="rfClose"]'); await page.click('#open-report'); await page.waitForSelector('#rf-title');
+    const d = await state();
+    assert.deepEqual(d.form, ['', '', '', '', '', ''], '送信後に入力欄が空でない');
+    assert.equal(await page.evaluate(() => Object.values(AL.Report.draft || {}).every((v) => v === '')), true, '送信後の下書きが空でない');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
 test('報告機能が使えなくても（未設定・通信不能・fetch なし）、ゲーム本体の戦闘・画面は止まらない', async () => {
   const { context, page, errors } = await openPhone();
   try {

@@ -7228,12 +7228,10 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     failure = null; errors = {}; view = 'form';
     M = UI.modal({
       id: 'report', title: '不具合・ご意見を報告', html: formHtml(), persistent: true,
-      onOpen: function (bd) {
-        bd.addEventListener('input', onInput); bd.addEventListener('change', onInput);
-        fillForm();
-      },
+      onOpen: function (bd) { bd.addEventListener('input', onInput); bd.addEventListener('change', onInput); },
       onClose: function () { M = null; }
     });
+    fillForm();   // 開き直したときは、前回の下書きを入力欄に戻す（onOpen の時点では M が未代入のため、ここで行う）
   };
   function onInput(e) {
     var k = e.target && e.target.getAttribute && e.target.getAttribute('data-rf');
@@ -7242,12 +7240,18 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     if (errors[k]) { delete errors[k]; var er = $('[data-err="' + k + '"]'); if (er) er.textContent = ''; }
     counts();
   }
+  // 入力欄に見えている値を下書きにそろえる（自動入力などで input イベントが来なかった場合でも、見えている内容と送る内容を一致させる）
+  function syncDraft() {
+    var d = draft();
+    Array.prototype.forEach.call(M ? M.el.querySelectorAll('[data-rf]') : [], function (el) { d[el.getAttribute('data-rf')] = el.value; });
+  }
   function closeReport() { if (M && !R.state.sending) M.close(); }
 
   UI.action('openReport', function () { UI.openReport(); });
   UI.action('rfClose', closeReport);
   UI.action('rfBack', function () { if (R.state.sending) return; failure = null; show('form'); });
   UI.action('rfConfirm', function () {
+    syncDraft();
     var chk = R.validate(draft());
     errors = chk.errors;
     if (!chk.ok) {
