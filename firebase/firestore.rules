@@ -1,0 +1,78 @@
+rules_version = '2';
+
+// ABYSSAL LEGENDS ランキング（leaderboard）の Firestore セキュリティルール
+// ゲーム側の送信処理は index.html の js/core/ranking.js（AL.Ranking）。数値の上限は AL.Ranking.LIMITS と同じ値にする
+// （tests/ranking.test.mjs が一致を確認し、tests/ranking-rules.emu.mjs がエミュレーターで動作を確認する）。
+//
+// 担保すること
+//  1. 本人（匿名認証の uid）のドキュメントにしか書けない
+//  2. 値の範囲：表示名 1〜12 文字、階層 1〜100000、ボスラッシュ 0〜10000、転生回数 0〜100000
+//  3. 値は増える方向にしか更新できない
+//  4. 送信間隔：前回の送信（updatedAt）からサーバー時刻で 60 秒以上
+//  5. 伸び幅の上限（前回の送信からの経過時間に対して）
+//       階層     ：30 + 経過秒 × 1   （ゲーム内の最速は 10 階層あたり 46 ウェーブ × 移動 1.2 秒 ÷ 速度 4 = 13.8 秒。1 秒に 1 階層はその約 1.4 倍の余裕）
+//       ボスラッシュ：10 + 経過秒 ÷ 0.3 （ボス 1 体ごとに移動 1.2 秒 ÷ 速度 4 = 0.3 秒以上かかる）
+//       転生回数 ：10 + 経過秒 ÷ 2   （開始階層の強化が大きいと続けて転生できるため、確認ダイアログを押す速さを上限にした）
+//  6. hidden（管理者による非表示）は利用者が変えられない。新規は false だけ。非表示にされた記録は本人も削除できない
+//     （削除して作り直すと非表示が外れてしまうため。管理者は Firebase コンソールで hidden を true にする／ドキュメントを削除する）
+// 表示名は v1 では変更できない（変えたいときは削除して参加し直す）。
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /leaderboard/{uid} {
+      function isOwner() {
+        return request.auth != null && request.auth.uid == uid;
+      }
+      function next() {
+        return request.resource.data;
+      }
+      function validShape() {
+        return next().keys().hasAll(['name', 'floor', 'floorAt', 'rush', 'rebirths', 'updatedAt', 'hidden'])
+          && next().keys().hasOnly(['name', 'floor', 'floorAt', 'rush', 'rebirths', 'updatedAt', 'hidden'])
+          && next().name is string && next().name.size() >= 1 && next().name.size() <= 12
+          && next().name.trim() == next().name
+          && next().floor is int && next().floor >= 1 && next().floor <= 100000
+          && next().rush is int && next().rush >= 0 && next().rush <= 10000
+          && next().rebirths is int && next().rebirths >= 0 && next().rebirths <= 100000
+          && next().floorAt is timestamp
+          && next().hidden is bool
+          && next().updatedAt == request.time;
+      }
+      // 前回の送信からの経過ミリ秒
+      function elapsedMs() {
+        return request.time.toMillis() - resource.data.updatedAt.toMillis();
+      }
+      function withinGrowth() {
+        return next().floor - resource.data.floor <= 30 + elapsedMs() / 1000
+          && next().rush - resource.data.rush <= 10 + elapsedMs() / 300
+          && next().rebirths - resource.data.rebirths <= 10 + elapsedMs() / 2000;
+      }
+
+      allow get, list: if true;
+
+      allow create: if isOwner()
+        && validShape()
+        && next().hidden == false
+        && next().floorAt == request.time;
+
+      allow update: if isOwner()
+        && validShape()
+        && next().hidden == resource.data.hidden
+        && next().name == resource.data.name
+        && request.time >= resource.data.updatedAt + duration.value(60, 's')
+        && next().floor >= resource.data.floor
+        && next().rush >= resource.data.rush
+        && next().rebirths >= resource.data.rebirths
+        && (next().floor > resource.data.floor
+              ? next().floorAt == request.time
+              : next().floorAt == resource.data.floorAt)
+        && withinGrowth();
+
+      allow delete: if isOwner() && resource.data.hidden == false;
+    }
+
+    // それ以外のコレクションは読み書きしない
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

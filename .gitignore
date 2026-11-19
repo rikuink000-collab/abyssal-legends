@@ -5,3 +5,7 @@ test-results/
 abyssal_legends_*.json
 save-*.txt
 /private/
+# Firebase エミュレーター（npm run test:rules）のログ
+firebase-debug.log
+firestore-debug.log
+ui-debug.log

@@ -2591,6 +2591,55 @@ test('報告機能が使えなくても（未設定・通信不能・fetch な�
   } finally { await context.close(); }
 });
 
+test('ランキング（偽の Firebase）：参加するまで通信せず、参加・送信・削除してもセーブは変わらず、オンライン情報は別のキーにだけ入る', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    const seen = [];
+    // 本物の Firebase には接続しない：googleapis への通信はすべてここで受けて、偽の応答を返す
+    await context.route(/googleapis\.com/, async (route) => {
+      const r = route.request(), url = r.url();
+      seen.push({ method: r.method(), url });
+      const json = (o, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(o) });
+      if (r.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
+      if (url.includes('accounts:signUp')) return json({ idToken: 'id-1', refreshToken: 'rt-1', localId: 'uid1', expiresIn: '3600' });
+      if (url.includes('accounts:delete')) return json({});
+      if (url.endsWith(':commit')) return json({ commitTime: '2026-11-20T00:00:00Z' });
+      if (url.endsWith(':runQuery')) return json([{ document: { name: 'x/leaderboard/uid1', fields: { name: { stringValue: 'りく' }, floor: { integerValue: '12' }, rush: { integerValue: '0' }, rebirths: { integerValue: '0' }, hidden: { booleanValue: false } } } }]);
+      if (r.method() === 'DELETE') return json({});
+      return json({ error: { status: 'NOT_FOUND' } }, 404);
+    });
+    await boot(page);
+    await startAsVeteran(page);
+    assert.equal(await page.evaluate(() => AL.Ranking.configured()), true, '本番の設定値が入っている（通信はすべてこのテストの偽の応答で受ける）');
+    // 設定済みでも、参加していなければ戦闘が進んでも通信しない
+    await page.evaluate(() => { AL.Game.state.settings.speed = 4; });
+    await page.waitForTimeout(2500);
+    assert.deepEqual(seen, [], '参加する前に Firebase へ通信しました');
+    const snap = () => page.evaluate(([a, b]) => { AL.Game.paused = true; return { main: localStorage.getItem(a), backup: localStorage.getItem(b) }; }, [SAVE_KEY, BACKUP_KEY]);
+    await page.evaluate(() => AL.Game.save());
+    const before = await snap();
+    const res = await page.evaluate(async () => {
+      const st = AL.Game.state;
+      const j = await AL.Ranking.join('りく', st);
+      const t = await AL.Ranking.top('floor');
+      const keys = Object.keys(localStorage).sort();
+      const online = JSON.parse(localStorage.getItem('abyssal_legends_online'));
+      const l = await AL.Ranking.leave();
+      return { j, t: t.list, keys, online, after: localStorage.getItem('abyssal_legends_online'), floor: st.stats.maxFloorEver };
+    });
+    assert.equal(res.j.ok, true, JSON.stringify(res.j));
+    assert.equal(res.t[0].name, 'りく');
+    assert.ok(res.keys.includes('abyssal_legends_online'));
+    assert.equal(res.online.uid, 'uid1'); assert.equal(res.online.last.floor, res.floor);
+    assert.equal(res.after, null, '削除するとオンライン情報が消える');
+    const after = await snap();
+    assert.deepEqual(after, before, 'ランキングの操作でセーブが変わりました');
+    assert.equal(after.main.includes('rt-1') || after.main.includes('uid1'), false, 'セーブにオンライン情報が入っています');
+    assert.ok(seen.every((c) => /^https:\/\/(identitytoolkit|securetoken|firestore)\.googleapis\.com\//.test(c.url)), '想定外の送信先');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
 test('GitHub Pages の公開対象が index.html・README.md・og-image.png（共有時のリンクカード画像）だけである', () => {
   const published = trackedFiles().filter((f) => isPublished(f, pagesExcludes())).sort();
   assert.deepEqual(published, ['README.md', 'index.html', 'og-image.png'],

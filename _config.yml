@@ -8,5 +8,6 @@ exclude:
   - tests/
   - third_party/
   - gas/
+  - firebase/
   - test-results/
   - node_modules/
