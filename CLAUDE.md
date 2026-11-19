@@ -105,6 +105,25 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
 - 入力内容は HTML として解釈しない（`esc()` と `value` で扱う）。スプレッドシートでは `= + - @` で始まる文字を無害化する。
 - 本物の Google Apps Script・スプレッドシート・ブラウザからの送信（CORS）はテストできない。テストは架空の Google 環境と Playwright の偽の受付先で行っている。実環境の確認はユーザーに依頼する。
 
+## ランキングのルール
+
+- オンラインのランキング（v1。1.10.2 で通信の仕組み、画面は次の PR）。通信は `AL.Ranking`（`js/core/ranking.js`）。Firebase の匿名認証（Identity Toolkit）と Firestore を
+  REST（fetch）で直接呼ぶ。**Firebase SDK は読み込まない**（外部スクリプトを増やさない）。サーバー側の検証は `firebase/firestore.rules` だけで行う（無料の Spark プランで Cloud Functions は使わない）。
+  **ゲームの状態（`AL.Game.state`）・セーブ・戦闘・乱数（`U.rng`）には触れない。** 送信時に渡された state から値を読むだけ（`tests/ranking.test.mjs` がソースの参照を確認する）。
+  セーブへの影響は A（セーブの項目・保存キー・`SAVE_VERSION` は変えない）。
+- **ランキングで送信する項目は次の5つだけ**：表示名・通算の最高到達階層（`stats.maxFloorEver`）・ボスラッシュ最高撃破数（`stats.rushBest`）・転生回数（`rebirth.count`）・到達／更新の時刻（サーバー時刻）。
+  Firestore の `leaderboard/{uid}` = `{ name, floor, floorAt, rush, rebirths, updatedAt, hidden }`（`hidden` は管理者がコンソールで立てる非表示フラグ）。項目を増やすときはユーザーに相談する。
+  総戦力・獲得ゴールドは送らない（順位にも使わない）。転生回数は表示だけで、順位には使わない。
+- **参加はオプトイン。** 利用者が「参加する」を押すまで一切通信しない（参加していなければ送信・順位の取得もしない）。
+- **オンライン情報（匿名ログインの uid・リフレッシュトークン・表示名・前回送った値）は、セーブとは別のキー `abyssal_legends_online` に保存する。** セーブ本体・書き出しテキストには入れない
+  （書き出しテキストを人に見せたときにログイン情報が漏れるため）。ID トークンは保存しない（メモリだけ）。
+- 接続先は `AL.CONFIG.RANKING` の `API_KEY`・`PROJECT_ID` だけ（ユーザーが自分の Firebase プロジェクトで作ったウェブアプリの値）。**仮の値を入れない。** 空のときはランキングを使えない（画面にも出さない）。
+  Firebase の API キーは公開されてよい種類の値（権限はルールで制限する）だが、本物のプロジェクトにテストから接続しない。
+- ルールの上限（表示名 1〜12 文字・階層 1〜100000・ボスラッシュ 0〜10000・転生回数 0〜100000・送信間隔 60 秒・伸び幅）は `AL.Ranking.LIMITS`・`AL.CONFIG.RANKING.COOLDOWN_SEC` と同じ値にする
+  （`tests/ranking.test.mjs` が一致を確認する）。伸び幅の根拠はルールのコメントに書く。ルールを変えるときは `tests/ranking-rules.emu.mjs` も合わせて確認する。
+- 表示名の文字数は Firestore のルール（`string.size()`）と同じく UTF-16 の単位で数える（絵文字は2文字）。HTML などで使う記号（山かっこ・アンパサンド・引用符・バッククォート・バックスラッシュ）は使えない。表示するときも `esc()` を通す。
+- `firebase/`（ルール・インデックス・エミュレーターの設定）は `_config.yml` の `exclude` に入れ、公開しない。
+
 ## テスト
 
 - `npm test`：`tests/smoke.mjs`（Playwright の Chromium、iPhone 13 相当の画面）と `tests/*.test.mjs`（Node.js）を実行する。
@@ -142,6 +161,11 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
 - `tests/pixelfx.test.mjs`：pixelfx の区画のライセンス表示・形（`import`・`export` や外部通信がないこと、大きさの予算）、区画の順序、
   アダプターの優先度・同時再生の上限、重い端末への自動調整の判定（境界の値・戻さないこと・数えない場面・上限2での押しのけ）、`third_party/` の公開除外、クレジットを確認する。演出が実際に出ること・同時再生・描画の一致・
   例外時の退避・実際の戦闘での動作は `tests/smoke.mjs`（「戦闘演出（pixelfx）」）で確認する。見た目は `test-results/phone-fx-*.png` を目で確認する。
+- `tests/ranking.test.mjs`：ランキングの通信（偽の Firebase）。未設定・未参加では通信しないこと、表示名の検証、送る項目（7つ）とサーバー時刻、別キーへの保存、送信間隔・変化なし・値を下げないこと、
+  オフライン、トークンの取り直し、失敗の区別、取得のキャッシュと順位、自分の順位、削除、セーブ・書き出しへの影響がないこと、ルールとの上限の一致を確認する。
+  画面からの操作とセーブの不変は `tests/smoke.mjs` の「ランキング（偽の Firebase）」で確認する（`googleapis.com` への通信はすべて偽の応答で受ける）。
+- `npm run test:rules`（`tests/ranking-rules.emu.mjs`）：Firebase エミュレーター（認証・Firestore。`firebase-tools`、Java 21 以上が必要）の上で、`AL.Ranking` の参加〜削除と、ルールの6項目
+  （本人だけ・範囲・増える方向だけ・60秒・伸び幅・hidden）を確認する。プロジェクト ID は `demo-` で始まるエミュレーター専用の値で、本物の Firebase には接続しない。GitHub Actions の `test` でも実行する。
 - `tests/save-recovery.test.mjs`：架空の localStorage（テストごとに新しく作り、書き込み失敗などを仕込める）で、
   読み込み失敗時の復元、退避キーの衝突、退避の失敗と保護状態、バックアップの扱いを確認する。
   `tests/load-core.mjs` が index.html のゲームロジックを Node.js に読み込む（index.html は変更しない）。

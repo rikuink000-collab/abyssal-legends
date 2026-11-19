@@ -8,9 +8,11 @@
   },
   "scripts": {
     "test": "node --test tests/smoke.mjs tests/*.test.mjs",
-    "fixture": "node tests/extract-fixture.mjs"
+    "fixture": "node tests/extract-fixture.mjs",
+    "test:rules": "firebase emulators:exec --config firebase/firebase.json --only auth,firestore --project demo-abyssal \"node --test tests/ranking-rules.emu.mjs\""
   },
   "devDependencies": {
+    "firebase-tools": "14.27.0",
     "playwright": "1.63.0"
   }
 }

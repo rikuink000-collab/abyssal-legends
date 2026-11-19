@@ -618,7 +618,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.10.1',
+    GAME_VERSION: '1.10.2',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -632,6 +632,18 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       ENDPOINT: 'https://script.google.com/macros/s/AKfycbwVde2e3iy3Ew7qkG6VK4WkSDNZvlnRfQjSVwEwJTwRfDQb_f7Y3_efqyMF-teGdnQrbg/exec',
       TIMEOUT_MS: 15000,              // 応答を待つ時間（ミリ秒）
       COOLDOWN_SEC: 60                // 送信に成功してから、次に送れるまでの間隔（秒）
+    },
+
+    // ---- ランキング（js/core/ranking.js） ----
+    // API_KEY・PROJECT_ID：Firebase のウェブアプリの設定値（apiKey・projectId）。空のときはランキングを使えません（画面にも出しません）。
+    // ONLINE_KEY：匿名ログインの情報と表示名の保存先（セーブとは別のキー。セーブ・書き出しテキストには入れない）
+    RANKING: {
+      API_KEY: '',
+      PROJECT_ID: '',
+      ONLINE_KEY: 'abyssal_legends_online',
+      TIMEOUT_MS: 15000,              // 応答を待つ時間（ミリ秒）
+      COOLDOWN_SEC: 60,               // 記録を送る最短の間隔（秒）。firestore.rules の 60 秒と同じ
+      CACHE_SEC: 300                  // 取得したランキングを使い回す時間（秒）。無料枠の読み取り回数を抑える
     },
 
     // ---- 戦闘 ----
@@ -4245,6 +4257,382 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       if (r.ok) { S.lastOkAt = opts.now != null ? opts.now : Date.now(); S.requestId = null; S.fingerprint = null; }
       return r;
     }, function (e) { S.sending = false; return { ok: false, kind: 'network', code: 'network', message: '通信できませんでした' }; });
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>/* js/core/ranking.js */
+/* ABYSSAL LEGENDS - ランキング（通信・オンライン情報の保存）
+ * Firebase の匿名認証（Identity Toolkit）と Firestore を REST（fetch）で直接呼びます（Firebase SDK は読み込みません）。
+ * ゲームの状態（state）・セーブ・戦闘・乱数（U.rng）には触れません。送信時に、渡された state から値を読むだけです。
+ * 送る項目は「表示名・通算の最高到達階層・ボスラッシュ最高撃破数・転生回数・到達／更新の時刻（サーバー時刻）」だけです。
+ * 参加（join）するまでは一切通信しません。オンライン情報（匿名認証の情報・表示名）はセーブとは別のキー
+ * （AL.CONFIG.RANKING.ONLINE_KEY）に保存し、セーブ本体や書き出しテキストには入れません。
+ * 接続先は AL.CONFIG.RANKING の API_KEY・PROJECT_ID（未設定のときは使えません。設定手順は firebase-setup-guide）。
+ * サーバー側の検証は firebase/firestore.rules（数値の上限は LIMITS と同じ値）。 */
+(function (G) {
+  'use strict';
+  var AL = G.AL = G.AL || {};
+  var C = AL.CONFIG;
+
+  var K = AL.Ranking = {};
+  // firebase/firestore.rules と同じ値にします（tests/ranking.test.mjs が一致を確認します）
+  K.LIMITS = { nameMax: 12, floorMax: 100000, rushMax: 10000, rebirthsMax: 100000, top: 100 };
+  K.FIELDS = ['name', 'floor', 'floorAt', 'rush', 'rebirths', 'updatedAt', 'hidden'];
+  K.KINDS = ['floor', 'rush'];
+  K.HOSTS = {
+    auth: 'https://identitytoolkit.googleapis.com/v1',
+    token: 'https://securetoken.googleapis.com/v1',
+    firestore: 'https://firestore.googleapis.com/v1'
+  };
+
+  function cfg() { return C.RANKING || {}; }
+  K.cooldownMs = function () { return (cfg().COOLDOWN_SEC || 60) * 1000; };
+  K.cacheMs = function () { return (cfg().CACHE_SEC || 300) * 1000; };
+
+  // ---- 設定 ----
+  K.apiKeyOk = function (k) { return typeof k === 'string' && /^AIza[0-9A-Za-z_-]{35}$/.test(k); };
+  K.projectOk = function (p) { return typeof p === 'string' && /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(p); };
+  K.configured = function () { return K.apiKeyOk(cfg().API_KEY) && K.projectOk(cfg().PROJECT_ID); };
+
+  // ---- 表示名 ----
+  // 文字数は Firestore のルール（string.size()）と同じ数え方（UTF-16 の単位。絵文字などは2文字と数える）
+  K.nameLength = function (s) { return String(s).length; };
+  // 制御文字・書式文字を取り除き、空白（全角を含む）を1つにまとめて前後を削る
+  K.cleanName = function (s) {
+    return String(s == null ? '' : s)
+      .replace(/[\u0000-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]/g, '')
+      .replace(/[\s　]+/g, ' ').trim();
+  };
+  // 入力チェック（NGワードの確認は画面側の区画で行う）。{ok, name, error}
+  K.validateName = function (s) {
+    var name = K.cleanName(s), n = K.nameLength(name);
+    if (!n) return { ok: false, name: name, error: '表示名を入力してください' };
+    if (n > K.LIMITS.nameMax) return { ok: false, name: name, error: '表示名は' + K.LIMITS.nameMax + '文字以内で入力してください（現在 ' + n + ' 文字）' };
+    if (/[<>&"'`\\]/.test(name)) return { ok: false, name: name, error: '表示名に使えない記号が含まれています（< > & " \' ` \\）' };
+    return { ok: true, name: name, error: null };
+  };
+
+  // ---- 送る値（state から読むだけ） ----
+  function int(v, max) { v = Math.floor(Number(v)); return isFinite(v) ? Math.max(0, Math.min(max, v)) : 0; }
+  K.readValues = function (state) {
+    var s = (state && state.stats) || {}, rb = (state && state.rebirth) || {};
+    return {
+      floor: Math.max(1, int(s.maxFloorEver, K.LIMITS.floorMax)),
+      rush: int(s.rushBest, K.LIMITS.rushMax),
+      rebirths: int(rb.count, K.LIMITS.rebirthsMax)
+    };
+  };
+
+  // ---- オンライン情報（セーブとは別のキー） ----
+  // { v:1, uid, refreshToken, name, last:{floor,rush,rebirths}（前回送った値）, sentAt（前回送った端末の時刻） }
+  K.key = function () { return cfg().ONLINE_KEY || 'abyssal_legends_online'; };
+  K.loadOnline = function () {
+    var raw = AL.Storage ? AL.Storage.get(K.key()) : null, o;
+    if (!raw) return null;
+    try { o = JSON.parse(raw); } catch (e) { return null; }
+    if (!o || o.v !== 1 || typeof o.uid !== 'string' || typeof o.refreshToken !== 'string' || typeof o.name !== 'string') return null;
+    var last = o.last || {};
+    return {
+      v: 1, uid: o.uid, refreshToken: o.refreshToken, name: o.name,
+      last: { floor: int(last.floor, K.LIMITS.floorMax), rush: int(last.rush, K.LIMITS.rushMax), rebirths: int(last.rebirths, K.LIMITS.rebirthsMax) },
+      sentAt: Number(o.sentAt) > 0 ? Number(o.sentAt) : 0
+    };
+  };
+  K.saveOnline = function (o) { return !!(AL.Storage && AL.Storage.set(K.key(), JSON.stringify(o))); };
+  K.clearOnline = function () { if (AL.Storage) AL.Storage.remove(K.key()); K.session = { idToken: null, exp: 0, uid: null }; K.cache = {}; };
+  K.joined = function () { return !!K.loadOnline(); };
+
+  // メモリだけに置く情報（ID トークンは1時間で切れるため保存しない）
+  K.session = { idToken: null, exp: 0, uid: null };
+  K.cache = {};        // kind → { at, list }
+  K.busy = false;
+
+  // ---- 通信の共通処理 ----
+  function fail(kind, code, message) { return { ok: false, kind: kind, code: code || kind, message: message }; }
+  K.errorMessage = function (kind, code) {
+    if (kind === 'config') return 'ランキングは準備中です';
+    if (kind === 'network') return code === 'timeout' ? '時間内に応答がありませんでした' : '通信できませんでした（電波の状態をご確認ください）';
+    if (code === 'quota') return '本日のランキングの利用上限に達しました。時間をおいてお試しください';
+    if (code === 'denied') return 'ランキングに記録を受け付けてもらえませんでした（送信の間隔が短い、または記録の伸びが大きすぎます）';
+    if (code === 'auth') return 'ランキングの参加情報を確認できませんでした';
+    return 'ランキングのサーバーでエラーが起きました';
+  };
+  function hosts(opts) { var h = opts.hosts || {}; return { auth: h.auth || K.HOSTS.auth, token: h.token || K.HOSTS.token, firestore: h.firestore || K.HOSTS.firestore }; }
+
+  // 1回の通信。結果は {ok:true, status, json} か fail(...)
+  K.call = function (url, init, opts) {
+    opts = opts || {};
+    var fetchFn = opts.fetch || G.fetch;
+    if (typeof fetchFn !== 'function') return Promise.resolve(fail('network', 'network', K.errorMessage('network')));
+    var timeout = opts.timeoutMs || cfg().TIMEOUT_MS || 15000, ctl = null, timer = null;
+    try { if (G.AbortController) ctl = new G.AbortController(); } catch (e) { ctl = null; }
+    var timedOut = new Promise(function (res) { timer = setTimeout(function () { if (ctl) { try { ctl.abort(); } catch (e) { /* 無視 */ } } res('timeout'); }, timeout); });
+    // 送り元はオリジン（https://rikuink000-collab.github.io/）だけを伝える。API キーの「ウェブサイトの制限」がこれで判定するため、no-referrer にはしない
+    init.credentials = 'omit'; init.referrerPolicy = 'strict-origin'; init.cache = 'no-store';
+    if (ctl) init.signal = ctl.signal;
+    var req;
+    try { req = Promise.resolve(fetchFn(url, init)); } catch (e) { clearTimeout(timer); return Promise.resolve(fail('network', 'network', K.errorMessage('network'))); }
+    var work = req.then(function (resp) {
+      if (!resp) return fail('http', 'http', K.errorMessage('http'));
+      return resp.text().then(function (text) {
+        var j = null; try { j = text ? JSON.parse(text) : {}; } catch (e) { j = null; }
+        if (resp.ok && j) return { ok: true, status: resp.status, json: j };
+        var st = (j && j.error && (j.error.status || j.error.message)) || '', code = 'http';
+        if (resp.status === 429 || /RESOURCE_EXHAUSTED|QUOTA/i.test(st)) code = 'quota';
+        else if (resp.status === 403 || /PERMISSION_DENIED/.test(st)) code = 'denied';
+        else if (resp.status === 401 || /TOKEN|UNAUTHENTICATED|USER_NOT_FOUND|USER_DISABLED|INVALID_ID/i.test(st)) code = 'auth';
+        else if (resp.status === 404 || /NOT_FOUND/.test(st)) code = 'not_found';
+        else if (resp.status === 409 || /ALREADY_EXISTS|FAILED_PRECONDITION/.test(st)) code = 'conflict';
+        var r = fail('http', code, K.errorMessage('http', code)); r.status = resp.status; return r;
+      });
+    }, function () { return fail('network', 'network', K.errorMessage('network')); })
+      .catch(function () { return fail('network', 'network', K.errorMessage('network')); });
+    return Promise.race([work, timedOut.then(function () { return fail('network', 'timeout', K.errorMessage('network', 'timeout')); })])
+      .then(function (r) { clearTimeout(timer); return r; });
+  };
+  function jsonInit(body, token) {
+    var h = { 'Content-Type': 'application/json' };
+    if (token) h.Authorization = 'Bearer ' + token;
+    return { method: 'POST', headers: h, body: JSON.stringify(body) };
+  }
+
+  // ---- 匿名認証 ----
+  K.signUp = function (opts) {
+    opts = opts || {};
+    var url = hosts(opts).auth + '/accounts:signUp?key=' + encodeURIComponent(cfg().API_KEY);
+    return K.call(url, jsonInit({ returnSecureToken: true }), opts).then(function (r) {
+      if (!r.ok) return r;
+      var j = r.json;
+      if (typeof j.idToken !== 'string' || typeof j.refreshToken !== 'string' || typeof j.localId !== 'string') return fail('bad_response', 'bad_response', K.errorMessage('http'));
+      return { ok: true, uid: j.localId, idToken: j.idToken, refreshToken: j.refreshToken, expiresIn: Number(j.expiresIn) || 3600 };
+    });
+  };
+  K.refresh = function (refreshToken, opts) {
+    opts = opts || {};
+    var url = hosts(opts).token + '/token?key=' + encodeURIComponent(cfg().API_KEY);
+    var init = { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(refreshToken) };
+    return K.call(url, init, opts).then(function (r) {
+      if (!r.ok) { if (r.status === 400) { r.code = 'auth'; r.message = K.errorMessage('http', 'auth'); } return r; }
+      var j = r.json;
+      if (typeof j.id_token !== 'string' || typeof j.user_id !== 'string') return fail('bad_response', 'bad_response', K.errorMessage('http'));
+      return { ok: true, uid: j.user_id, idToken: j.id_token, refreshToken: typeof j.refresh_token === 'string' ? j.refresh_token : refreshToken, expiresIn: Number(j.expires_in) || 3600 };
+    });
+  };
+  function now(opts) { return opts && opts.now != null ? opts.now : Date.now(); }
+  function remember(a, opts) { K.session = { idToken: a.idToken, uid: a.uid, exp: now(opts) + a.expiresIn * 1000 }; }
+  // 参加済みの端末の ID トークン（期限の1分前から取り直す）
+  K.token = function (online, opts) {
+    var S = K.session;
+    if (S.idToken && S.uid === online.uid && S.exp - 60000 > now(opts)) return Promise.resolve({ ok: true, idToken: S.idToken, uid: S.uid });
+    return K.refresh(online.refreshToken, opts).then(function (r) {
+      if (!r.ok) return r;
+      if (r.uid !== online.uid) return fail('http', 'auth', K.errorMessage('http', 'auth'));
+      remember(r, opts);
+      if (r.refreshToken !== online.refreshToken) { online.refreshToken = r.refreshToken; K.saveOnline(online); }
+      return { ok: true, idToken: r.idToken, uid: r.uid };
+    });
+  };
+
+  // ---- Firestore ----
+  function dbBase() { return 'projects/' + cfg().PROJECT_ID + '/databases/(default)/documents'; }
+  K.docName = function (uid) { return dbBase() + '/leaderboard/' + uid; };
+  function iv(n) { return { integerValue: String(n) }; }
+  function readInt(f) { return f && f.integerValue != null ? Number(f.integerValue) : 0; }
+  // Firestore の REST 形式 → { uid, name, floor, floorAt, rush, rebirths, updatedAt, hidden }
+  K.fromDoc = function (doc) {
+    if (!doc || !doc.fields) return null;
+    var f = doc.fields, uid = String(doc.name || '').split('/').pop();
+    return {
+      uid: uid, name: f.name && typeof f.name.stringValue === 'string' ? f.name.stringValue : '',
+      floor: readInt(f.floor), rush: readInt(f.rush), rebirths: readInt(f.rebirths),
+      floorAt: f.floorAt && f.floorAt.timestampValue || null, updatedAt: f.updatedAt && f.updatedAt.timestampValue || null,
+      hidden: !!(f.hidden && f.hidden.booleanValue)
+    };
+  };
+  // 書き込み1件。create：新規（同じ uid の記録がないときだけ）。それ以外は変わった項目だけを更新する
+  K.buildWrite = function (uid, name, values, prev) {
+    var create = !prev, fields = {}, mask = [], transforms = [{ fieldPath: 'updatedAt', setToServerValue: 'REQUEST_TIME' }];
+    if (create) {
+      fields = { name: { stringValue: name }, floor: iv(values.floor), rush: iv(values.rush), rebirths: iv(values.rebirths), hidden: { booleanValue: false } };
+      transforms.push({ fieldPath: 'floorAt', setToServerValue: 'REQUEST_TIME' });
+      return { update: { name: K.docName(uid), fields: fields }, updateTransforms: transforms, currentDocument: { exists: false } };
+    }
+    ['floor', 'rush', 'rebirths'].forEach(function (k) { if (values[k] !== prev[k]) { fields[k] = iv(values[k]); mask.push(k); } });
+    if (values.floor > prev.floor) transforms.push({ fieldPath: 'floorAt', setToServerValue: 'REQUEST_TIME' });
+    return { update: { name: K.docName(uid), fields: fields }, updateMask: { fieldPaths: mask }, updateTransforms: transforms, currentDocument: { exists: true } };
+  };
+  K.commit = function (write, idToken, opts) {
+    return K.call(hosts(opts || {}).firestore + '/' + dbBase() + ':commit', jsonInit({ writes: [write] }, idToken), opts);
+  };
+  K.getDoc = function (uid, opts) {
+    var init = { method: 'GET', headers: {} };
+    return K.call(hosts(opts || {}).firestore + '/' + K.docName(uid), init, opts).then(function (r) {
+      if (!r.ok) return r.code === 'not_found' ? { ok: true, entry: null } : r;
+      return { ok: true, entry: K.fromDoc(r.json) };
+    });
+  };
+
+  // 送る値（前回送った値より小さくはしない。ルールが減る更新を拒否するため）
+  function merged(values, last) {
+    return { floor: Math.max(values.floor, last.floor || 0), rush: Math.max(values.rush, last.rush || 0), rebirths: Math.max(values.rebirths, last.rebirths || 0) };
+  }
+  function same(a, b) { return a.floor === b.floor && a.rush === b.rush && a.rebirths === b.rebirths; }
+
+  // 参加：表示名を確かめ、匿名ログインして記録を作る。ここで初めて通信する
+  K.join = function (rawName, state, opts) {
+    opts = opts || {};
+    if (!K.configured()) return Promise.resolve(fail('config', 'config', K.errorMessage('config')));
+    if (K.busy) return Promise.resolve(fail('busy', 'busy', '通信中です'));
+    var chk = K.validateName(rawName);
+    if (!chk.ok) return Promise.resolve({ ok: false, kind: 'invalid', code: 'invalid', message: chk.error });
+    if (opts.ngCheck) { var ng = opts.ngCheck(chk.name); if (ng) return Promise.resolve({ ok: false, kind: 'invalid', code: 'ng', message: ng }); }
+    var values = K.readValues(state), prevOnline = K.loadOnline();
+    K.busy = true;
+    // 参加し直し（削除後など）で以前のログイン情報が残っていれば使い、なければ新しく匿名ログインする
+    var auth = prevOnline ? K.token(prevOnline, opts) : K.signUp(opts).then(function (a) { if (a.ok) remember(a, opts); return a; });
+    return auth.then(function (a) {
+      if (!a.ok) return a;
+      var refresh = a.refreshToken || (prevOnline && prevOnline.refreshToken);
+      return K.commit(K.buildWrite(a.uid, chk.name, values, null), a.idToken, opts).then(function (r) {
+        if (!r.ok) return r;
+        var o = { v: 1, uid: a.uid, refreshToken: refresh, name: chk.name, last: values, sentAt: now(opts) };
+        K.saveOnline(o); K.cache = {};
+        return { ok: true, name: chk.name, values: values };
+      });
+    }).then(function (r) { K.busy = false; return r; }, function () { K.busy = false; return fail('network', 'network', K.errorMessage('network')); });
+  };
+
+  // 記録の送信（参加済みのときだけ）。前回の送信から COOLDOWN_SEC 未満、または値が変わっていなければ送らない
+  K.submit = function (state, opts) {
+    opts = opts || {};
+    var o = K.loadOnline();
+    if (!o) return Promise.resolve({ ok: false, kind: 'not_joined', code: 'not_joined', message: 'ランキングに参加していません' });
+    if (!K.configured()) return Promise.resolve(fail('config', 'config', K.errorMessage('config')));
+    if (K.busy) return Promise.resolve({ ok: false, kind: 'busy', code: 'busy', message: '通信中です' });
+    var values = merged(K.readValues(state), o.last);
+    if (same(values, o.last)) return Promise.resolve({ ok: true, skipped: 'unchanged' });
+    var wait = K.cooldownMs() - (now(opts) - o.sentAt);
+    if (o.sentAt && wait > 0) return Promise.resolve({ ok: false, kind: 'cooldown', code: 'cooldown', wait: wait, message: 'あと ' + Math.ceil(wait / 1000) + ' 秒で送信できます' });
+    if (opts.online === false || (G.navigator && G.navigator.onLine === false)) return Promise.resolve(fail('network', 'offline', K.errorMessage('network')));
+    K.busy = true;
+    return K.token(o, opts).then(function (a) {
+      if (!a.ok) return a;
+      return K.commit(K.buildWrite(o.uid, o.name, values, o.last), a.idToken, opts).then(function (r) {
+        if (r.ok) {
+          o.last = values; o.sentAt = now(opts); K.saveOnline(o); K.cache = {};
+          return { ok: true, values: values };
+        }
+        // 拒否・記録なし：サーバーの記録に合わせ直す（次回はその値との差で送る）
+        if (r.code === 'denied' || r.code === 'conflict' || r.code === 'not_found') {
+          return K.getDoc(o.uid, opts).then(function (g) {
+            if (g.ok && g.entry) { o.last = { floor: g.entry.floor, rush: g.entry.rush, rebirths: g.entry.rebirths }; o.sentAt = now(opts); K.saveOnline(o); }
+            else if (g.ok && !g.entry) { o.sentAt = now(opts); K.saveOnline(o); r.removed = true; }
+            return r;
+          });
+        }
+        return r;
+      });
+    }).then(function (r) { K.busy = false; return r; }, function () { K.busy = false; return fail('network', 'network', K.errorMessage('network')); });
+  };
+
+  // ランキングから自分を削除（記録を消し、匿名ログインのアカウントも消し、この端末のオンライン情報を消す）
+  K.leave = function (opts) {
+    opts = opts || {};
+    var o = K.loadOnline();
+    if (!o) return Promise.resolve({ ok: true, already: true });
+    if (!K.configured()) return Promise.resolve(fail('config', 'config', K.errorMessage('config')));
+    if (K.busy) return Promise.resolve({ ok: false, kind: 'busy', code: 'busy', message: '通信中です' });
+    K.busy = true;
+    return K.token(o, opts).then(function (a) {
+      if (!a.ok) {
+        // ログイン情報が無効（アカウントがすでにない）なら、この端末の情報だけ消す
+        if (a.code === 'auth') { K.clearOnline(); return { ok: true, localOnly: true }; }
+        return a;
+      }
+      var url = hosts(opts).firestore + '/' + K.docName(o.uid);
+      return K.call(url, { method: 'DELETE', headers: { Authorization: 'Bearer ' + a.idToken } }, opts).then(function (r) {
+        if (!r.ok && r.code !== 'not_found' && r.code !== 'denied') return r;
+        var hiddenKept = !r.ok && r.code === 'denied';   // 管理者が非表示にした記録は本人も消せない（表示はされない）
+        return K.call(hosts(opts).auth + '/accounts:delete?key=' + encodeURIComponent(cfg().API_KEY), jsonInit({ idToken: a.idToken }), opts).then(function () {
+          K.clearOnline();
+          return { ok: true, hiddenKept: hiddenKept };
+        });
+      });
+    }).then(function (r) { K.busy = false; return r; }, function () { K.busy = false; return fail('network', 'network', K.errorMessage('network')); });
+  };
+
+  // ---- 取得（上位 LIMITS.top 件。CACHE_SEC の間はメモリのキャッシュを使う） ----
+  K.query = function (kind) {
+    var q = { from: [{ collectionId: 'leaderboard' }], limit: K.LIMITS.top };
+    if (kind === 'rush') {
+      q.where = { fieldFilter: { field: { fieldPath: 'rush' }, op: 'GREATER_THAN', value: iv(0) } };
+      q.orderBy = [{ field: { fieldPath: 'rush' }, direction: 'DESCENDING' }];
+    } else {
+      q.orderBy = [{ field: { fieldPath: 'floor' }, direction: 'DESCENDING' }, { field: { fieldPath: 'floorAt' }, direction: 'ASCENDING' }];
+    }
+    return { structuredQuery: q };
+  };
+  // 順位を付ける（非表示の記録は除く）。階層は並び順どおり（同じ階層は先に到達した人が上）、ボスラッシュは同数を同順位にする
+  K.rank = function (kind, entries) {
+    var list = entries.filter(function (e) { return e && !e.hidden; }), prev = null, rank = 0;
+    return list.map(function (e, i) {
+      if (kind === 'rush') { if (prev === null || e.rush !== prev) rank = i + 1; prev = e.rush; }
+      else rank = i + 1;
+      return { rank: rank, uid: e.uid, name: e.name, floor: e.floor, rush: e.rush, rebirths: e.rebirths };
+    });
+  };
+  K.top = function (kind, opts) {
+    opts = opts || {};
+    if (K.KINDS.indexOf(kind) < 0) kind = 'floor';
+    if (!K.configured()) return Promise.resolve(fail('config', 'config', K.errorMessage('config')));
+    var c = K.cache[kind];
+    if (!opts.force && c && now(opts) - c.at < K.cacheMs()) return Promise.resolve({ ok: true, cached: true, list: c.list, at: c.at });
+    return K.call(hosts(opts).firestore + '/' + dbBase() + ':runQuery', jsonInit(K.query(kind)), opts).then(function (r) {
+      if (!r.ok) return r;
+      var rows = Array.isArray(r.json) ? r.json : [];
+      var list = K.rank(kind, rows.map(function (x) { return x && x.document ? K.fromDoc(x.document) : null; }));
+      K.cache[kind] = { at: now(opts), list: list };
+      return { ok: true, cached: false, list: list, at: K.cache[kind].at };
+    });
+  };
+
+  // 自分の順位（件数を数えるだけの集計クエリ。読み取りは 1000 件ごとに 1 回分）
+  function countQuery(filters) {
+    var where = filters.length === 1 ? filters[0] : { compositeFilter: { op: 'AND', filters: filters } };
+    return { structuredAggregationQuery: { structuredQuery: { from: [{ collectionId: 'leaderboard' }], where: where }, aggregations: [{ alias: 'n', count: {} }] } };
+  }
+  function ff(path, op, value) { return { fieldFilter: { field: { fieldPath: path }, op: op, value: value } }; }
+  K.count = function (filters, opts) {
+    return K.call(hosts(opts).firestore + '/' + dbBase() + ':runAggregationQuery', jsonInit(countQuery(filters)), opts).then(function (r) {
+      if (!r.ok) return r;
+      var row = Array.isArray(r.json) ? r.json[0] : null, v = row && row.result && row.result.aggregateFields && row.result.aggregateFields.n;
+      return v && v.integerValue != null ? { ok: true, n: Number(v.integerValue) } : fail('bad_response', 'bad_response', K.errorMessage('http'));
+    });
+  };
+  // 結果：{ok, entry（サーバー上の自分の記録。なければ null）, rank（ボスラッシュが0なら null）}
+  K.myRank = function (kind, opts) {
+    opts = opts || {};
+    var o = K.loadOnline();
+    if (!o) return Promise.resolve({ ok: false, kind: 'not_joined', code: 'not_joined', message: 'ランキングに参加していません' });
+    if (!K.configured()) return Promise.resolve(fail('config', 'config', K.errorMessage('config')));
+    return K.getDoc(o.uid, opts).then(function (g) {
+      if (!g.ok) return g;
+      var e = g.entry;
+      if (!e) return { ok: true, entry: null, rank: null };
+      if (e.hidden) return { ok: true, entry: e, rank: null };
+      if (kind === 'rush') {
+        if (!e.rush) return { ok: true, entry: e, rank: null };
+        return K.count([ff('rush', 'GREATER_THAN', iv(e.rush))], opts).then(function (c) { return c.ok ? { ok: true, entry: e, rank: c.n + 1 } : c; });
+      }
+      return K.count([ff('floor', 'GREATER_THAN', iv(e.floor))], opts).then(function (c1) {
+        if (!c1.ok) return c1;
+        return K.count([ff('floor', 'EQUAL', iv(e.floor)), ff('floorAt', 'LESS_THAN', { timestampValue: e.floorAt })], opts).then(function (c2) {
+          return c2.ok ? { ok: true, entry: e, rank: c1.n + c2.n + 1 } : c2;
+        });
+      });
+    });
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 

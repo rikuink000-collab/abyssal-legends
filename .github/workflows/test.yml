@@ -36,6 +36,15 @@ jobs:
       # 失敗したテストがあれば node --test が終了コード 1 を返し、このジョブは失敗になる
       - run: npm test
 
+      # ランキングの Firestore ルールを Firebase エミュレーターで確認する（本物の Firebase には接続しない）。
+      # エミュレーターは Java 21 以上が必要なため、ランナーに入っている Java 21 を使う
+      - name: Firestore ルールのテスト（エミュレーター）
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          java -version
+          npm run test:rules
+
       - name: スクリーンショットを保存
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
