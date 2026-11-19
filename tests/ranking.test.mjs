@@ -48,9 +48,13 @@ function fakeFirebase(over = {}) {
   return { fetch, calls, docs };
 }
 
-test('未設定（API_KEY・PROJECT_ID が空）では使えず、通信しない。設定値の形式を確かめる', async () => {
+test('設定値はりくさんの Firebase のウェブアプリの値。未設定（空）では使えず、通信しない。設定値の形式を確かめる', async () => {
   const { K, AL } = game();
-  assert.equal(AL.CONFIG.RANKING.API_KEY, '', '仮の設定値を入れない（りくさんの Firebase の値をもらってから設定する）');
+  // 2026-11-20 にりくさんから受け取った値（API キーは公開前提の値。権限は firestore.rules で制限）
+  assert.equal(AL.CONFIG.RANKING.PROJECT_ID, 'abyssal-legends');
+  assert.equal(K.apiKeyOk(AL.CONFIG.RANKING.API_KEY), true);
+  assert.equal(K.configured(), true);
+  AL.CONFIG.RANKING.API_KEY = ''; AL.CONFIG.RANKING.PROJECT_ID = '';
   assert.equal(K.configured(), false);
   const f = fakeFirebase();
   for (const r of [await K.join('名前', stateWith(5), { fetch: f.fetch }), await K.top('floor', { fetch: f.fetch })]) assert.equal(r.kind, 'config');

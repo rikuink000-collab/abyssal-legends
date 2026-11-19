@@ -2610,7 +2610,7 @@ test('ランキング（偽の Firebase）：参加するまで通信せず、�
     });
     await boot(page);
     await startAsVeteran(page);
-    await page.evaluate(() => { AL.CONFIG.RANKING.API_KEY = 'AIzaSyTEST_test_test_test_test_test_tes'; AL.CONFIG.RANKING.PROJECT_ID = 'abyssal-test'; });
+    assert.equal(await page.evaluate(() => AL.Ranking.configured()), true, '本番の設定値が入っている（通信はすべてこのテストの偽の応答で受ける）');
     // 設定済みでも、参加していなければ戦闘が進んでも通信しない
     await page.evaluate(() => { AL.Game.state.settings.speed = 4; });
     await page.waitForTimeout(2500);
