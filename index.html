@@ -228,15 +228,17 @@ label.toggle:last-child { border-bottom: none; }
 .dungeon-banner { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: linear-gradient(90deg, rgba(197, 92, 255, 0.25), rgba(139, 108, 255, 0.1)); border: 1px solid #8a5aff; margin-bottom: 6px; }
 .party-cards { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; padding-bottom: 8px; }
 .pc { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px; position: relative; min-width: 0; cursor: pointer; }
-.pc.dead { opacity: 0.45; filter: grayscale(0.7); }
-.pc.sel { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 10px rgba(255, 204, 77, 0.35); }
-.pc.dead .hp-cur { color: var(--bad); font-weight: 700; }
+/* 戦闘不能：絵・名前・ゲージは暗くし、「戦闘不能」の文字は暗くしない（小さい画面でも読めるように） */
+.pc.dead .pc-top, .pc.dead .pc-name, .pc.dead .bar, .pc.dead .sts { opacity: 0.45; filter: grayscale(0.7); }
+.pc.dead .hp-cur { color: #ff8a96; font-weight: 800; }
+/* 選択中のカード：金色の枠（戦闘画面の対応するキャラクターにも印が出る） */
+.pc.sel { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold), 0 0 12px rgba(255, 204, 77, 0.45); }
 .pc .pc-top { display: flex; align-items: center; gap: 2px; }
 .pc img { width: 32px; height: 32px; flex: 0 0 auto; }
 .pc .pc-name { font-size: 11px; font-weight: 700; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pc .pc-lv { font-size: 10px; color: var(--sub); }
 .pc .bar { height: 6px; margin-top: 2px; }
-.pc .pc-hp { font-size: 10px; color: var(--sub); text-align: right; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.pc .pc-hp { font-size: 11px; color: var(--sub); text-align: right; line-height: 1.2; font-variant-numeric: tabular-nums; }
 .pc .pc-hp span { display: inline-block; white-space: nowrap; }
 /* 幅360px以下：5人のカードが並ぶと狭いため、顔の絵と Lv の文字を少し小さくして、3桁の Lv もカード内に収める */
 @media (max-width: 360px) { .pc .pc-top img { width: 24px; height: 24px; } .pc .pc-lv { font-size: 9px; } }
@@ -5624,10 +5626,13 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     // 選択中の仲間（下部のカードをタップ・ポインターを重ねたとき）：足元の輪と頭上の印で、カードとキャラクターを対応づける
     if (u.side === 'ally' && Scene.selected === u.uid) {
       var pulse = 0.6 + 0.4 * Math.sin(t * 6);
-      ctx.globalAlpha = 1; ctx.strokeStyle = S.rgba('#ffcc4d', 0.9 * pulse); ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.ellipse(v.x + ox, v.y - 1, size * 0.4, size * 0.11, 0, 0, 7); ctx.stroke();
-      var mx = Math.round(v.x + ox), my = y - 12 + Math.round(Math.sin(t * 5) * 1.5);
-      ctx.fillStyle = '#ffcc4d'; ctx.beginPath(); ctx.moveTo(mx - 4, my); ctx.lineTo(mx + 4, my); ctx.lineTo(mx, my + 4); ctx.closePath(); ctx.fill();
+      ctx.globalAlpha = 1; ctx.fillStyle = S.rgba('#ffcc4d', 0.22 * pulse);
+      ctx.beginPath(); ctx.ellipse(v.x + ox, v.y - 1, size * 0.42, size * 0.12, 0, 0, 7); ctx.fill();
+      ctx.strokeStyle = S.rgba('#ffcc4d', 0.95 * pulse); ctx.lineWidth = 1.5; ctx.stroke();
+      // 頭上の印は、スキル名（頭上 9px）と重ならない高さに出す
+      var mx = Math.round(v.x + ox), my = y - 22 + Math.round(Math.sin(t * 5) * 1.5);
+      ctx.fillStyle = '#000'; ctx.beginPath(); ctx.moveTo(mx - 6, my - 1); ctx.lineTo(mx + 6, my - 1); ctx.lineTo(mx, my + 6); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#ffcc4d'; ctx.beginPath(); ctx.moveTo(mx - 5, my); ctx.lineTo(mx + 5, my); ctx.lineTo(mx, my + 5); ctx.closePath(); ctx.fill();
     }
     // HPバー：敵だけ頭上に出す（ボスは上部に表示）。味方のHP・スキル待機は下部のカードにまとめている
     if (u.alive && !isBoss) {
@@ -6051,15 +6056,20 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
   // ---- 総戦力：表示・増減の一時表示・内訳 ----
   // 値は AL.Stats.partyPower（編成画面の総戦力と同じ計算）をそのまま使う。
   // 増減は、戦闘パネルが見えているときに前回見えていた値と比べて出す（他の画面で装備・強化してから戻ったときも分かる）
-  var pw = { shown: null, diff: 0, until: 0 };
+  var pw = { shown: null, diff: 0, until: 0, settle: 0, absorb: false };
   UI.POWER_DIFF_MS = 4000;
+  // 読み込み時の変化は増減として出さない：ゲーム開始・データの読み込み／初期化・放置報酬の受け取りのあと、
+  // 最初の1秒ごとの処理（自動レベルアップ）までの変化は、表示の基準にだけ取り込む
+  UI.settlePower = function () { pw.settle = 1; pw.absorb = true; pw.diff = 0; pw.until = 0; };
+  AL.Events.on('second', function () { if (pw.settle > 0) { pw.settle--; pw.absorb = true; } });
   UI.tickPower = function (st) {
     var val = AL.Stats.partyPower(st), el = UI.$('#hud-power'), de = UI.$('#hud-power-diff');
     if (!el) return;
     var vt = U.fmt(val);
     if (el.textContent !== vt) el.textContent = vt;
     var visible = UI.$('#battle-panel').offsetParent !== null, now = Date.now();
-    if (visible) {
+    if (pw.absorb) { pw.shown = val; pw.diff = 0; pw.until = 0; pw.absorb = pw.settle > 0; }
+    else if (visible) {
       if (pw.shown !== null && val !== pw.shown && AL.Game.runner.mode !== 'tutorial') {
         pw.diff = (now < pw.until ? pw.diff : 0) + (val - pw.shown);
         pw.until = now + UI.POWER_DIFF_MS;
@@ -6201,6 +6211,7 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
         '<div>強化石<b>' + r.stones + '</b></div><div>魂晶<b>' + r.crystals + '</b></div><div>装備<b>' + r.items + '個</b></div></div>',
       buttons: [{ label: '受け取る', cls: 'gold', onClick: function () {
         var res = AL.Game.claimIdle();
+        UI.settlePower();   // 受け取った経験値による自動レベルアップは、読み込み時の変化として増減を出さない
         if (res) UI.toast('放置報酬を受け取りました' + (res.items ? '（装備 ' + res.kept + '個入手・' + res.sold + '個自動売却）' : ''), 'good');
         UI.renderCurrency(); UI.updateBadges(); UI.refresh();
       } }]
@@ -7199,7 +7210,7 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
         (check.warnings.length ? '<div class="tiny sub mt">' + check.warnings.map(esc).join('<br>') + '</div>' : ''),
       onOk: function () {
         var r = AL.Game.importText(text);
-        if (r.ok) { UI.toast('セーブデータを読み込みました', 'good'); UI.renderCurrency(); UI.show('battle'); }
+        if (r.ok) { UI.toast('セーブデータを読み込みました', 'good'); UI.settlePower(); UI.renderCurrency(); UI.show('battle'); }
         else UI.toast((r.errors && r.errors[0]) || '読み込みに失敗しました', 'bad', 5000);
       }
     });
@@ -7226,7 +7237,7 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
       onOk: function () {
         var r = AL.Game.resetAll();
         if (!r.ok) { UI.toast(r.msg, 'bad', 5000); return; }
-        UI.toast('初期化しました'); UI.renderCurrency(); UI.show('battle');
+        UI.toast('初期化しました'); UI.settlePower(); UI.renderCurrency(); UI.show('battle');
       }
     });
   });
@@ -7601,6 +7612,7 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     UI.titleOpen = false;
     AL.Game.paused = false;
     AL.Game.lastReal = Date.now();
+    UI.settlePower();   // 開始直後の自動レベルアップによる総戦力の変化は、増減として出さない
     UI.renderNav();
     if (!AL.Guide.unlocked(UI.st(), UI.current)) UI.show('battle');
     // タイトル画面で表示したお知らせは繰り返さず、タイトル画面の表示後に加わったものだけを表示する

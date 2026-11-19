@@ -1572,6 +1572,8 @@ test('総戦力：タップで仲間ごとの戦闘力と相性の内訳が出�
   const { context, page, errors } = await openPhone();
   try {
     await openBattleUI(page);
+    // 読み込み直後（開始後の最初の1秒ごとの処理まで）の変化は増減として出さない仕様のため、それが終わってから止める
+    await page.waitForTimeout(1500);
     await page.evaluate(() => { AL.Game.paused = true; });
     await page.click('#hud-power-box');
     await page.waitForSelector('.pw-row');
@@ -1621,6 +1623,71 @@ test('総戦力：タップで仲間ごとの戦闘力と相性の内訳が出�
     }
     // 表示時間が過ぎると増減は消える
     assert.equal(await page.evaluate(() => { AL.UI.tickBattle(); return document.getElementById('hud-power-diff').textContent; }), '');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('総戦力の増減：読み込み直後（開始・放置報酬の受け取りの自動レベルアップ）では出さず、その後の育成では出す', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await seedSave(page, FIXTURES[0].text);
+    await boot(page);
+    const p0 = await page.evaluate(() => AL.Stats.partyPower(AL.Game.state));
+    assert.equal(await page.evaluate(() => AL.Game.state.settings.autoLevel), true, '前提：自動レベルアップが ON ではありません');
+    await page.click('[data-title="continue"]');
+    // 放置報酬はダイアログの「受け取る」から受け取る（実際の操作と同じ経路）
+    await page.waitForSelector('.backdrop .btn.gold');
+    await page.click('.backdrop .btn.gold');
+    await page.evaluate(() => AL.UI.show('battle'));
+    // 開始から3秒間（1秒ごとの自動レベルアップを含む）、増減の表示が一度も出ないこと
+    const seen = new Set();
+    for (let i = 0; i < 30; i++) { seen.add(await page.evaluate(() => document.getElementById('hud-power-diff').textContent)); await page.waitForTimeout(100); }
+    const p1 = await page.evaluate(() => AL.Stats.partyPower(AL.Game.state));
+    assert.ok(p1 > p0, `前提：読み込み直後の自動レベルアップで総戦力が変わっていません（${p0} → ${p1}）`);
+    assert.deepEqual([...seen], [''], `読み込み直後に増減が表示されました：${[...seen].join(' ')}`);
+    assert.equal(await page.evaluate(() => document.getElementById('hud-power').textContent), await page.evaluate(() => AL.U.fmt(AL.Stats.partyPower(AL.Game.state))));
+    // 読み込みが終わったあとの育成（レベルアップ）は、増減として出る
+    const r = await page.evaluate(() => {
+      const st = AL.Game.state; st.settings.autoLevel = false;
+      const id = st.party.filter(Boolean)[0], before = AL.Stats.partyPower(st);
+      st.heroes[id].lv += 3; AL.UI.tickBattle();
+      const d = AL.Stats.partyPower(st) - before;
+      return { diff: document.getElementById('hud-power-diff').textContent, want: '▲' + AL.U.fmt(d) };
+    });
+    assert.equal(r.diff, r.want, '読み込み後の育成で増減が表示されません');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('360px の仲間カード：文字の大きさ・タップ領域・戦闘不能の読みやすさ・選択状態・横のはみ出し', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await openBattleUI(page, 360, 780);
+    await page.evaluate(() => { AL.Game.paused = true; const a = AL.Game.runner.battle.allies; a[4].alive = false; a[4].hp = 0; AL.UI.tickBattle(); });
+    const r = await page.evaluate(() => {
+      const cards = [...document.querySelectorAll('#party-cards .pc')];
+      const op = (e) => { let o = 1; for (let x = e; x && x !== document.body; x = x.parentElement) o *= +getComputedStyle(x).opacity; return o; };
+      const dead = document.querySelector('#party-cards .pc.dead .hp-cur');
+      return {
+        sw: document.documentElement.scrollWidth, iw: innerWidth,
+        cards: cards.map((c) => { const q = c.getBoundingClientRect(); return { w: q.width, h: q.height, name: parseFloat(getComputedStyle(c.querySelector('.pc-name')).fontSize), hp: parseFloat(getComputedStyle(c.querySelector('.pc-hp')).fontSize) }; }),
+        dead: dead && { text: dead.textContent, opacity: op(dead) }
+      };
+    });
+    assert.ok(r.sw <= r.iw, '360px：横にはみ出しています');
+    for (const c of r.cards) {
+      assert.ok(c.w >= 44 && c.h >= 44, `360px：カードのタップ領域が小さすぎます（${c.w}×${c.h}）`);
+      assert.ok(c.name >= 11 && c.hp >= 11, `360px：カードの名前・HP の文字が小さすぎます（${c.name}px / ${c.hp}px）`);
+    }
+    assert.ok(r.dead && r.dead.text === '戦闘不能' && r.dead.opacity >= 0.99, `360px：「戦闘不能」の文字が薄く表示されています ${JSON.stringify(r.dead)}`);
+    // タップで選択：カードの枠（はっきり見える太さ）とキャラクターの印
+    const uid = await page.evaluate(() => AL.Game.runner.battle.allies[2].uid);
+    await page.tap(`#pc-${uid}`);
+    const s = await page.evaluate((u) => { const c = document.getElementById('pc-' + u); const cs = getComputedStyle(c); return { sel: AL.Scene.selected, cls: c.classList.contains('sel'), border: cs.borderColor, shadow: cs.boxShadow }; }, uid);
+    assert.equal(s.sel, uid, '360px：タップしたカードのキャラクターが選択状態になりません');
+    assert.ok(s.cls && /2px/.test(s.shadow), `360px：選択中のカードの枠がはっきりしません ${JSON.stringify(s)}`);
+    await page.evaluate(() => AL.UI.closeModal());
+    await page.screenshot({ path: `${SHOTS}/phone-party-cards-select-360.png` });
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
