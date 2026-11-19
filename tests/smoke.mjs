@@ -1477,7 +1477,8 @@ test('仲間カード（5人編成・320px／360px／390px）：横にはみ出�
             outside: cards.flatMap((c) => { const cr = c.getBoundingClientRect(); return [...c.querySelectorAll('*')].filter((k) => { const q = k.getBoundingClientRect(); return q.width && (q.right > cr.right + 0.5 || q.left < cr.left - 0.5); }).map((k) => k.className); }),
             hp: allies.map((u) => { const c = document.getElementById('pc-' + u.uid), cur = c.querySelector('.hp-cur'), max = c.querySelector('.hp-max'), cr = c.getBoundingClientRect();
               const inside = (e) => { const q = e.getBoundingClientRect(); return q.left >= cr.left - 0.5 && q.right <= cr.right + 0.5 && e.scrollWidth <= e.clientWidth + 1; };
-              return { cur: cur.textContent, max: max.textContent, want: [AL.U.fmt(u.hp), '/' + AL.U.fmt(u.maxHp)], text: c.querySelector('.pc-hp').textContent,
+              // 戦闘不能の仲間は「0/最大HP」ではなく「戦闘不能」と出す（1.10.0）
+              return { cur: cur.textContent, max: max.textContent, want: u.alive ? [AL.U.fmt(u.hp), '/' + AL.U.fmt(u.maxHp)] : ['戦闘不能', ''], text: c.querySelector('.pc-hp').textContent,
                 visible: inside(cur) && inside(max), lines: cur.getBoundingClientRect().top === max.getBoundingClientRect().top ? 1 : 2 }; })
           };
         });
@@ -1490,7 +1491,7 @@ test('仲間カード（5人編成・320px／360px／390px）：横にはみ出�
         for (const h of r.hp) {
           assert.deepEqual([h.cur, h.max], h.want, `${where}：HP の数値が省略・変更されています`);
           assert.equal(h.text, h.want.join(''), `${where}：HP の表示が「現在値/最大値」になっていません`);
-          assert.ok(h.visible, `${where}：HP の数値が欠けています ${JSON.stringify(h)}`);
+          assert.ok(h.visible || h.want[0] === '戦闘不能', `${where}：HP の数値が欠けています ${JSON.stringify(h)}`);
         }
         console.log(`# 仲間カード ${where}：HP の行数 ${r.hp.map((h) => h.lines).join(',')}`);
         await page.screenshot({ path: `${SHOTS}/phone-party-cards-${label}-${width}.png`, clip: { x: 0, y: 0, width, height: 560 } });
@@ -1500,6 +1501,311 @@ test('仲間カード（5人編成・320px／360px／390px）：横にはみ出�
       }
     }
   }
+});
+
+// ===== 戦闘画面のUI改善（1.10.0）：総戦力・HP・自動進行・戦闘速度・通知バッジ =====
+
+// 合成フィクスチャで既存プレイヤーとして開き、放置報酬などのダイアログを閉じて戦闘画面にする
+async function openBattleUI(page, width, height) {
+  if (width) await page.setViewportSize({ width, height: height || 844 });
+  await seedSave(page, FIXTURES[0].text);
+  await boot(page);
+  await page.click('[data-title="continue"]');
+  await page.evaluate(() => {
+    if (AL.Game.pendingIdle) AL.Game.claimIdle();
+    AL.UI.closeModal(); AL.Game.state.settings.autoLevel = false; AL.UI.show('battle');
+  });
+  await page.waitForTimeout(300);
+}
+
+test('戦闘画面（360px／390px／430px・PC）：総戦力が大きく欠けずに表示され、横にはみ出さない。古い操作・表示は出ない', async () => {
+  for (const [width, height, phone] of [[360, 780, true], [390, 844, true], [430, 932, true], [1280, 800, false]]) {
+    const { context, page, errors } = phone ? await openPhone() : await (async () => {
+      const context = await browser.newContext({ viewport: { width, height } });
+      const page = await context.newPage(); const errors = [];
+      page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+      page.on('console', (m) => { if (m.type() === 'error') errors.push(`console.error: ${m.text()}`); });
+      return { context, page, errors };
+    })();
+    try {
+      await openBattleUI(page, width, height);
+      // 長い数値でも崩れないこと：再挑戦ボタンが出ている状態（合成フィクスチャは敗北した階層あり）で確かめる
+      await page.evaluate(() => { AL.Game.paused = true; AL.Game.state.tower.blockedFloor = AL.Game.state.tower.floor + 1; AL.UI.tickBattle(); });
+      const r = await page.evaluate(() => {
+        const box = (sel) => { const e = document.querySelector(sel); if (!e) return null; const q = e.getBoundingClientRect(); return { l: q.left, r: q.right, t: q.top, b: q.bottom, w: q.width, sw: e.scrollWidth, cw: e.clientWidth, vis: !!e.offsetParent }; };
+        const st = AL.Game.state;
+        return {
+          iw: innerWidth, sw: document.documentElement.scrollWidth,
+          power: document.getElementById('hud-power').textContent, want: AL.U.fmt(AL.Stats.partyPower(st)),
+          box: box('#hud-power-box'), val: box('#hud-power'), speed: box('#btn-speed'), ch: box('#btn-challenge'),
+          speedText: document.getElementById('btn-speed').textContent, speedWant: '×' + st.settings.speed,
+          fontPower: parseFloat(getComputedStyle(document.getElementById('hud-power')).fontSize),
+          fontHp: parseFloat(getComputedStyle(document.querySelector('.pc .pc-hp')).fontSize),
+          old: ['#hud-kills', '#speed-seg', '#battle-panel #btn-advance', '#battle-panel [data-act="setSpeed"]'].filter((q) => document.querySelector(q)),
+          panelBtns: [...document.querySelectorAll('#battle-panel button')].filter((b) => b.offsetParent).map((b) => { const q = b.getBoundingClientRect(); return { id: b.id || b.className, l: q.left, r: q.right, t: q.top, b: q.bottom, h: q.height }; })
+        };
+      });
+      const where = `${width}px`;
+      assert.equal(r.iw, width, `${where}：画面幅が広がっています`);
+      assert.ok(r.sw <= r.iw, `${where}：横にはみ出しています`);
+      assert.equal(r.power, r.want, `${where}：総戦力の表示が内部の計算（Stats.partyPower）と一致しません`);
+      assert.ok(r.val.vis && r.val.l >= r.box.l - 0.5 && r.val.r <= r.box.r + 0.5 && r.val.sw <= r.val.cw + 1, `${where}：総戦力の数値が欠けています ${JSON.stringify(r.val)}`);
+      assert.ok(r.box.r <= width && r.speed.r <= width + 0.5, `${where}：総戦力・速度ボタンが画面外に出ています`);
+      assert.ok(r.fontPower >= 20 && r.fontPower > r.fontHp * 1.8, `${where}：総戦力の文字が HP より十分大きくありません（${r.fontPower}px）`);
+      assert.equal(r.speedText, r.speedWant, `${where}：速度ボタンに今の倍率が出ていません`);
+      assert.ok(r.ch.vis, `${where}：再挑戦ボタンが出ていません`);
+      assert.deepEqual(r.old, [], `${where}：削除・移動したはずの表示が戦闘パネルに残っています`);
+      // ボタン同士が重ならない
+      for (let i = 0; i < r.panelBtns.length; i++) for (let j = i + 1; j < r.panelBtns.length; j++) {
+        const a = r.panelBtns[i], b = r.panelBtns[j];
+        const overlap = a.l < b.r - 0.5 && b.l < a.r - 0.5 && a.t < b.b - 0.5 && b.t < a.b - 0.5;
+        assert.ok(!overlap, `${where}：ボタンが重なっています ${a.id} / ${b.id}`);
+      }
+      for (const b of r.panelBtns.filter((x) => ['hud-power-box', 'btn-speed', 'btn-challenge'].includes(x.id))) assert.ok(b.h >= 40, `${where}：${b.id} が押しにくい高さです（${b.h}px）`);
+      await page.screenshot({ path: `${SHOTS}/${phone ? 'phone' : 'pc'}-battle-ui-${width}.png` });
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
+test('総戦力：タップで仲間ごとの戦闘力と相性の内訳が出る。育成・装備・強化で値と増減の表示が更新される', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await openBattleUI(page);
+    // 読み込み直後（開始後の最初の1秒ごとの処理まで）の変化は増減として出さない仕様のため、それが終わってから止める
+    await page.waitForTimeout(1500);
+    await page.evaluate(() => { AL.Game.paused = true; });
+    await page.click('#hud-power-box');
+    await page.waitForSelector('.pw-row');
+    const d = await page.evaluate(() => {
+      const st = AL.Game.state, syn = AL.Stats.synergies(st.party);
+      return {
+        total: document.querySelector('.pw-total').textContent, totalWant: AL.U.fmt(AL.Stats.partyPower(st)),
+        rows: [...document.querySelectorAll('.pw-row')].map((r) => [r.dataset.id, r.querySelector('b').textContent]),
+        want: st.party.filter(Boolean).map((id) => [id, AL.U.fmt(AL.Stats.hero(st, id, { synergy: AL.Stats.synergyBonusFor(id, syn) }).power)]),
+        syn: document.querySelectorAll('.backdrop .syn.on').length, synWant: syn.length,
+        sum: AL.Stats.partyPower(st), sumRows: st.party.filter(Boolean).reduce((a, id) => a + AL.Stats.hero(st, id, { synergy: AL.Stats.synergyBonusFor(id, syn) }).power, 0)
+      };
+    });
+    assert.equal(d.total, d.totalWant, '内訳の総戦力が内部の計算と一致しません');
+    assert.deepEqual(d.rows, d.want, '仲間ごとの戦闘力が内部の計算と一致しません');
+    assert.equal(d.syn, d.synWant, '発動中の相性の数が一致しません');
+    assert.ok(Math.abs(d.sum - d.sumRows) <= Math.max(1, d.sum * 1e-9), '仲間ごとの戦闘力の合計が総戦力になりません');
+    await page.evaluate(() => AL.UI.closeModal());
+
+    // 育成（レベル）・装備の付け替え・強化のたびに、総戦力の表示と増減（▲▼）が内部の値どおりに更新される
+    // 増減の表示は一定時間内の変化をまとめるため、表示時間を短くして、1つずつ前の表示が消えてから確かめる
+    await page.evaluate(() => { AL.UI.POWER_DIFF_MS = 80; AL.UI.tickBattle(); });
+    await page.waitForTimeout(150);
+    const ctx = await page.evaluate(() => { const st = AL.Game.state, id = st.party.filter(Boolean)[0], h = st.heroes[id]; const slot = Object.keys(h.equip).find((k) => h.equip[k]); return { id, slot, uid: h.equip[slot] }; });
+    const changes = {
+      level: ({ id }) => { AL.Game.state.heroes[id].lv += 5; },
+      unequip: ({ id, slot }) => { AL.Game.state.heroes[id].equip[slot] = null; },
+      equip: ({ id, uid }) => { if (!AL.Inv.equip(AL.Game.state, id, uid)) throw new Error('装備できません'); },
+      enhance: ({ uid }) => { const st = AL.Game.state; st.currency.gold = 1e30; st.currency.stones = 1e9; AL.Inv.find(st, uid).enh = 0; AL.UI.tickBattle(); if (!AL.Inv.enhance(st, uid).ok) throw new Error('強化できません'); }
+    };
+    const steps = [];
+    for (const [step, fn] of Object.entries(changes)) {
+      steps.push(await page.evaluate(([src, c, step]) => {
+        const st = AL.Game.state; AL.UI.tickBattle();
+        const before = AL.Stats.partyPower(st);
+        (0, eval)('(' + src + ')')(c);
+        AL.UI.tickBattle();
+        const d = AL.Stats.partyPower(st) - before;
+        return { step, shown: document.getElementById('hud-power').textContent, want: AL.U.fmt(AL.Stats.partyPower(st)), diff: document.getElementById('hud-power-diff').textContent, d, dWant: (d > 0 ? '▲' : '▼') + AL.U.fmt(Math.abs(d)) };
+      }, [fn.toString(), ctx, step]));
+      await page.waitForTimeout(150);
+    }
+    for (const s of steps) {
+      assert.equal(s.shown, s.want, `${s.step}：総戦力の表示が更新されていません`);
+      assert.ok(Math.abs(s.d) >= 1, `前提：${s.step} で戦闘力が変わりません`);
+      assert.equal(s.diff, s.dWant, `${s.step}：増減の表示が実際の変化と一致しません`);
+    }
+    // 表示時間が過ぎると増減は消える
+    assert.equal(await page.evaluate(() => { AL.UI.tickBattle(); return document.getElementById('hud-power-diff').textContent; }), '');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('総戦力の増減：読み込み直後（開始・放置報酬の受け取りの自動レベルアップ）では出さず、その後の育成では出す', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await seedSave(page, FIXTURES[0].text);
+    await boot(page);
+    const p0 = await page.evaluate(() => AL.Stats.partyPower(AL.Game.state));
+    assert.equal(await page.evaluate(() => AL.Game.state.settings.autoLevel), true, '前提：自動レベルアップが ON ではありません');
+    await page.click('[data-title="continue"]');
+    // 放置報酬はダイアログの「受け取る」から受け取る（実際の操作と同じ経路）
+    await page.waitForSelector('.backdrop .btn.gold');
+    await page.click('.backdrop .btn.gold');
+    await page.evaluate(() => AL.UI.show('battle'));
+    // 開始から3秒間（1秒ごとの自動レベルアップを含む）、増減の表示が一度も出ないこと
+    const seen = new Set();
+    for (let i = 0; i < 30; i++) { seen.add(await page.evaluate(() => document.getElementById('hud-power-diff').textContent)); await page.waitForTimeout(100); }
+    const p1 = await page.evaluate(() => AL.Stats.partyPower(AL.Game.state));
+    assert.ok(p1 > p0, `前提：読み込み直後の自動レベルアップで総戦力が変わっていません（${p0} → ${p1}）`);
+    assert.deepEqual([...seen], [''], `読み込み直後に増減が表示されました：${[...seen].join(' ')}`);
+    assert.equal(await page.evaluate(() => document.getElementById('hud-power').textContent), await page.evaluate(() => AL.U.fmt(AL.Stats.partyPower(AL.Game.state))));
+    // 読み込みが終わったあとの育成（レベルアップ）は、増減として出る
+    const r = await page.evaluate(() => {
+      const st = AL.Game.state; st.settings.autoLevel = false;
+      const id = st.party.filter(Boolean)[0], before = AL.Stats.partyPower(st);
+      st.heroes[id].lv += 3; AL.UI.tickBattle();
+      const d = AL.Stats.partyPower(st) - before;
+      return { diff: document.getElementById('hud-power-diff').textContent, want: '▲' + AL.U.fmt(d) };
+    });
+    assert.equal(r.diff, r.want, '読み込み後の育成で増減が表示されません');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('360px の仲間カード：文字の大きさ・タップ領域・戦闘不能の読みやすさ・選択状態・横のはみ出し', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await openBattleUI(page, 360, 780);
+    await page.evaluate(() => { AL.Game.paused = true; const a = AL.Game.runner.battle.allies; a[4].alive = false; a[4].hp = 0; AL.UI.tickBattle(); });
+    const r = await page.evaluate(() => {
+      const cards = [...document.querySelectorAll('#party-cards .pc')];
+      const op = (e) => { let o = 1; for (let x = e; x && x !== document.body; x = x.parentElement) o *= +getComputedStyle(x).opacity; return o; };
+      const dead = document.querySelector('#party-cards .pc.dead .hp-cur');
+      return {
+        sw: document.documentElement.scrollWidth, iw: innerWidth,
+        cards: cards.map((c) => { const q = c.getBoundingClientRect(); return { w: q.width, h: q.height, name: parseFloat(getComputedStyle(c.querySelector('.pc-name')).fontSize), hp: parseFloat(getComputedStyle(c.querySelector('.pc-hp')).fontSize) }; }),
+        dead: dead && { text: dead.textContent, opacity: op(dead) }
+      };
+    });
+    assert.ok(r.sw <= r.iw, '360px：横にはみ出しています');
+    for (const c of r.cards) {
+      assert.ok(c.w >= 44 && c.h >= 44, `360px：カードのタップ領域が小さすぎます（${c.w}×${c.h}）`);
+      assert.ok(c.name >= 11 && c.hp >= 11, `360px：カードの名前・HP の文字が小さすぎます（${c.name}px / ${c.hp}px）`);
+    }
+    assert.ok(r.dead && r.dead.text === '戦闘不能' && r.dead.opacity >= 0.99, `360px：「戦闘不能」の文字が薄く表示されています ${JSON.stringify(r.dead)}`);
+    // タップで選択：カードの枠（はっきり見える太さ）とキャラクターの印
+    const uid = await page.evaluate(() => AL.Game.runner.battle.allies[2].uid);
+    await page.tap(`#pc-${uid}`);
+    const s = await page.evaluate((u) => { const c = document.getElementById('pc-' + u); const cs = getComputedStyle(c); return { sel: AL.Scene.selected, cls: c.classList.contains('sel'), border: cs.borderColor, shadow: cs.boxShadow }; }, uid);
+    assert.equal(s.sel, uid, '360px：タップしたカードのキャラクターが選択状態になりません');
+    assert.ok(s.cls && /2px/.test(s.shadow), `360px：選択中のカードの枠がはっきりしません ${JSON.stringify(s)}`);
+    await page.evaluate(() => AL.UI.closeModal());
+    await page.screenshot({ path: `${SHOTS}/phone-party-cards-select-360.png` });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('HP：味方のHPは下部のカードだけに出し、戦闘不能は「戦闘不能」と出す。カードを選ぶとキャラクターにも選択の印が出る', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await openBattleUI(page);
+    await page.evaluate(() => { AL.Game.paused = true; });
+    // 頭上のHPバーは敵だけ：味方の HP を変えても、戦闘画面の描画が変わらない（カードの表示だけが変わる）
+    const r = await page.evaluate(() => {
+      const b = AL.Game.runner.battle, u = b.allies.find((x) => x.alive), c = document.getElementById('scene'), S = AL.Scene;
+      // 描画の揺れ（呼吸・粒子・乱数）を止めて同じ時刻で2回描き、味方の HP だけを変えた差を見る
+      const snap = () => { const R = Math.random, P = performance.now; Math.random = () => 0.5; performance.now = () => 1000; S.fx = []; S.texts = []; S.projs = []; try { S.render(); } finally { Math.random = R; performance.now = P; } return c.toDataURL(); };
+      const hp0 = u.hp, a = snap(); u.hp = Math.max(1, u.maxHp * 0.1); const bImg = snap();
+      AL.UI.tickBattle();
+      const card = document.getElementById('pc-' + u.uid).querySelector('.pc-hp').textContent, want = AL.U.fmt(u.hp) + '/' + AL.U.fmt(u.maxHp);
+      u.hp = hp0;
+      // 戦闘不能
+      const v = b.allies.find((x) => x.alive && x !== u); const vh = v.hp; v.alive = false; v.hp = 0; AL.UI.tickBattle();
+      const dead = document.getElementById('pc-' + v.uid).querySelector('.pc-hp').textContent;
+      v.alive = true; v.hp = vh; AL.UI.tickBattle();
+      const back = document.getElementById('pc-' + v.uid).querySelector('.pc-hp').textContent;
+      return { same: a === bImg, card, want, dead, back, backWant: AL.U.fmt(v.hp) + '/' + AL.U.fmt(v.maxHp) };
+    });
+    assert.ok(r.same, '味方の HP を変えると戦闘画面の描画が変わります（頭上の味方 HP バーが残っています）');
+    assert.equal(r.card, r.want, 'カードの HP が内部の値と一致しません');
+    assert.equal(r.dead, '戦闘不能', '戦闘不能の仲間のカードが「戦闘不能」になっていません');
+    assert.equal(r.back, r.backWant, '復帰後のカードの HP が元に戻りません');
+
+    // カードをタップ：対応するキャラクターに選択の印（Scene.selected）、カードにも選択の枠。詳細も開く
+    const uid = await page.evaluate(() => AL.Game.runner.battle.allies[1].uid);
+    await page.click(`#pc-${uid}`);
+    const sel = await page.evaluate(() => ({ s: AL.Scene.selected, cls: [...document.querySelectorAll('#party-cards .pc.sel')].map((c) => c.id), modal: !!AL.UI.topModal('hero') }));
+    assert.equal(sel.s, uid, 'カードを選んでも、対応するキャラクターが選択状態になりません');
+    assert.deepEqual(sel.cls, [`pc-${uid}`], '選んだカードだけに選択の枠が付いていません');
+    assert.ok(sel.modal, 'カードをタップしても仲間の詳細が開きません');
+    // 詳細を閉じて時間が過ぎたら選択は外れる（戦闘の状態には触れない）
+    await page.mouse.move(1, 1);   // ポインターをカードから外す（重ねている間は選択が続く）
+    await page.evaluate(() => { AL.UI.closeModal(); AL.UI.selectAlly(AL.Scene.selected, 1); });
+    await page.waitForTimeout(400);
+    await page.evaluate(() => AL.UI.tickBattle());
+    assert.equal(await page.evaluate(() => AL.Scene.selected), null, '選択が外れません');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('自動進行：切り替えは「階層の操作」にあり、OFF のときだけ「周回中」と「次の階層へ」が出る。処理と保存は従来どおり', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await openBattleUI(page);
+    await page.evaluate(() => { const t = AL.Game.state.tower; AL.Game.paused = true; t.blockedFloor = 0; t.maxFloor = Math.max(t.maxFloor, t.floor + 3); AL.UI.render(); AL.UI.tickBattle(); });
+    const s0 = await page.evaluate(() => ({ auto: AL.Game.state.tower.autoAdvance, loop: !!document.getElementById('hud-loop'), ch: document.getElementById('btn-challenge').offsetParent !== null, btn: document.querySelector('#screen #btn-advance')?.textContent }));
+    assert.deepEqual(s0, { auto: true, loop: false, ch: false, btn: 'ON' }, '自動進行 ON のときの表示が違います');
+    await page.click('#screen #btn-advance');
+    await page.evaluate(() => AL.UI.tickBattle());
+    const s1 = await page.evaluate(() => ({ auto: AL.Game.state.tower.autoAdvance, loop: document.getElementById('hud-loop')?.textContent, ch: document.getElementById('btn-challenge').offsetParent !== null, chText: document.getElementById('btn-challenge').textContent, btn: document.querySelector('#screen #btn-advance')?.textContent }));
+    assert.deepEqual(s1, { auto: false, loop: '周回中', ch: true, chText: '次の階層へ', btn: 'OFF' }, '自動進行 OFF のときの表示が違います');
+    // 「次の階層へ」：従来どおり1つ上の階層に挑む（自動進行は OFF のまま）
+    const f0 = await page.evaluate(() => AL.Game.state.tower.floor);
+    await page.click('#btn-challenge');
+    assert.deepEqual(await page.evaluate(() => [AL.Game.state.tower.floor, AL.Game.state.tower.autoAdvance]), [f0 + 1, false]);
+    // 保存・再読み込みで OFF が保たれる
+    await page.evaluate(() => AL.Game.save());
+    await page.reload();
+    await page.waitForFunction(() => !document.getElementById('loading') && window.AL && AL.Game && AL.Game.state, null, { timeout: 15000 });
+    assert.equal(await page.evaluate(() => AL.Game.state.tower.autoAdvance), false, '自動進行の設定が保存されていません');
+    // 下の階層へ移動すると自動で OFF になる仕様は変わらない
+    await page.click('[data-title="continue"]');
+    await page.evaluate(() => { AL.UI.closeModal(); AL.Game.runner.setAutoAdvance(true); AL.UI.show('battle'); AL.UI.ui.floorTarget = 1; });
+    await page.click('[data-act="gotoFloor"]');
+    assert.equal(await page.evaluate(() => AL.Game.state.tower.autoAdvance), false, '下の階層へ移動しても自動進行が OFF になりません');
+    // 新規開始の初期値は ON のまま
+    assert.equal(await page.evaluate(() => AL.State.createDefault().tower.autoAdvance), true);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('戦闘速度：1つのボタンで ×1→×2→×3→×4→×1 と切り替わり、設定画面と同じ値・同じ保存先を使う', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await openBattleUI(page);
+    await page.evaluate(() => { AL.Game.state.settings.speed = 1; AL.UI.tickBattle(); });
+    const seen = [];
+    for (let i = 0; i < 4; i++) {
+      await page.click('#btn-speed');
+      seen.push(await page.evaluate(() => [AL.Game.state.settings.speed, AL.Game.speed(), document.getElementById('btn-speed').textContent]));
+    }
+    assert.deepEqual(seen, [[2, 2, '×2'], [3, 3, '×3'], [4, 4, '×4'], [1, 1, '×1']]);
+    // 設定画面で変えた値がボタンに出る
+    await page.evaluate(() => AL.UI.show('settings'));
+    await page.click('[data-act="setSpeedS"][data-v="3"]');
+    await page.evaluate(() => { AL.UI.show('battle'); AL.UI.tickBattle(); });
+    assert.equal(await page.evaluate(() => document.getElementById('btn-speed').textContent), '×3');
+    // 保存・再読み込みで保たれる。新規開始の初期値は ×1 のまま
+    await page.evaluate(() => AL.Game.save());
+    const saved = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), SAVE_KEY);
+    assert.equal((saved.data || saved).settings.speed, 3, '戦闘速度が settings.speed に保存されていません');
+    await page.reload();
+    await page.waitForFunction(() => !document.getElementById('loading') && window.AL && AL.Game && AL.Game.state, null, { timeout: 15000 });
+    assert.equal(await page.evaluate(() => AL.Game.state.settings.speed), 3);
+    assert.equal(await page.evaluate(() => AL.State.createDefault().settings.speed), 1);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('通知バッジ：数字のないバッジは「その他」のタイルにも出ない（数字のあるバッジは出る）', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await openBattleUI(page);
+    await page.evaluate(() => { AL.UI.show('menu'); AL.UI.updateBadges(); });
+    const r = await page.evaluate(() => [...document.querySelectorAll('.menu-tile .badge, .nav-item .badge')].map((b) => ({ id: b.id, text: b.textContent, shown: getComputedStyle(b).display !== 'none' && b.offsetParent !== null })));
+    const wrong = r.filter((b) => b.text === '' && b.shown);
+    assert.deepEqual(wrong, [], '中身のない通知バッジ（赤い丸）が出ています');
+    assert.ok(r.some((b) => b.text !== '' && b.shown), '前提：数字のある通知バッジが1つも出ていません');
+    await page.screenshot({ path: `${SHOTS}/phone-menu-badges.png` });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
 });
 
 // ===== 通貨表示 =====
