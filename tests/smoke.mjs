@@ -719,7 +719,8 @@ test('新規プレイヤー：タイトル → 初回召喚 → はじめての�
     assert.equal(await titleNotice(page), null, '正常な起動でお知らせが表示されています');
     let g = await guideInfo(page);
     assert.equal(g.paused, true);
-    assert.deepEqual(g.nav, ['battle', 'menu', 'settings'], '導入前から使える機能が多すぎます');
+    // サポート（報告フォーム。1.10.1 から PC の上部メニューにも並ぶ）は、設定と同じく導入前から使える
+    assert.deepEqual(g.nav, ['battle', 'menu', 'settings', 'support'], '導入前から使える機能が多すぎます');
     await page.screenshot({ path: `${SHOTS}/phone-guide-title.png` });
 
     await page.click('[data-title="new"]');
@@ -1808,6 +1809,77 @@ test('通知バッジ：数字のないバッジは「その他」のタイル�
   } finally { await context.close(); }
 });
 
+// ===== その他画面：サポートのタイル（1.10.1） =====
+
+test('その他画面：サポートは設定の隣のタイル（3列のまま・360px／390px／430px）で、報告フォームを開く。設定画面に重複して出ない。PC では上部メニューから開ける', async () => {
+  for (const width of [360, 390, 430]) {
+    const { context, page, errors } = await openPhone();
+    try {
+      await page.setViewportSize({ width, height: 844 });
+      await boot(page);
+      await startAsVeteran(page);
+      await page.evaluate(() => { AL.Game.paused = true; AL.UI.show('menu'); });
+      const r = await page.evaluate(() => {
+        const tiles = [...document.querySelectorAll('.menu-grid > .menu-tile')];
+        const box = (e) => { const q = e.getBoundingClientRect(); return { l: Math.round(q.left), t: Math.round(q.top), w: Math.round(q.width), h: Math.round(q.height) }; };
+        const cols = getComputedStyle(document.querySelector('.menu-grid')).gridTemplateColumns.split(' ').length;
+        return { sw: document.documentElement.scrollWidth, iw: innerWidth, cols, names: tiles.map((t) => t.querySelector('.ni').nextSibling?.textContent || t.textContent), ids: tiles.map((t) => t.dataset.id || t.id),
+          boxes: tiles.map(box), cls: tiles.map((t) => t.className), icon: document.querySelector('#open-report .ni')?.textContent };
+      });
+      const where = `${width}px`;
+      assert.ok(r.sw <= r.iw, `${where}：横にはみ出しています`);
+      assert.equal(r.cols, 3, `${where}：メニューが3列ではありません`);
+      const iS = r.ids.indexOf('settings'), iP = r.ids.indexOf('open-report');
+      assert.equal(iP, r.ids.length - 1, `${where}：サポートが最後のタイルではありません ${r.ids}`);
+      assert.equal(iP, iS + 1, `${where}：サポートが設定の隣にありません`);
+      // 最終行は「設定・サポート」：同じ行に並び、ほかのタイルと同じ大きさ・同じデザイン
+      assert.equal(r.boxes[iP].t, r.boxes[iS].t, `${where}：設定とサポートが同じ行にありません`);
+      assert.ok(r.boxes[iP].l > r.boxes[iS].l, `${where}：サポートが設定の右にありません`);
+      assert.ok(r.boxes.slice(0, iS).every((b) => b.t < r.boxes[iS].t), `${where}：設定・サポートが最終行ではありません`);
+      assert.ok(r.boxes.every((b) => b.w === r.boxes[0].w && b.h === r.boxes[0].h), `${where}：タイルの大きさがそろっていません ${JSON.stringify(r.boxes)}`);
+      assert.equal(r.cls[iP], 'menu-tile', `${where}：サポートのタイルが既存のタイルと違うデザインです`);
+      assert.equal(r.icon, '問');
+      assert.ok(r.boxes[iP].w >= 44 && r.boxes[iP].h >= 44, `${where}：サポートのタイルが押しにくい大きさです`);
+      // タップすると、これまでと同じ報告フォームが開く（セーブは変わらない）
+      const before = await page.evaluate((k) => localStorage.getItem(k), SAVE_KEY);
+      await page.tap('#open-report');
+      await page.waitForSelector('.backdrop .rf');
+      assert.ok(await page.isVisible('#rf-title'), `${where}：報告フォームが開きません`);
+      await page.screenshot({ path: `${SHOTS}/phone-menu-support-form-${width}.png` });
+      await page.click('[data-act="rfClose"]');
+      assert.equal(await page.evaluate((k) => localStorage.getItem(k), SAVE_KEY), before, `${where}：フォームの開閉でセーブが変わりました`);
+      await page.screenshot({ path: `${SHOTS}/phone-menu-support-${width}.png` });
+      // 設定画面にはサポートのパネルを出さない（初期化・バックアップ・遊び方は残る）
+      await page.evaluate(() => AL.UI.show('settings'));
+      const txt = await page.locator('#screen').innerText();
+      assert.ok(!txt.includes('サポート') && !txt.includes('不具合・ご意見を報告する'), `${where}：設定画面にサポートが重複しています`);
+      for (const t of ['データを初期化', '書き出し（ファイル）', '今すぐ保存', '遊び方']) assert.ok(txt.includes(t), `${where}：設定画面の「${t}」がありません`);
+      assert.equal(await page.locator('#open-report').count(), 0, `${where}：その他画面以外にもサポートのボタンがあります`);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+  // PC（その他画面を使わない広い画面）：上部メニューの「サポート」から報告フォームを開ける
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage(); const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  try {
+    await boot(page);
+    await startAsVeteran(page);
+    assert.ok(await page.isVisible('#nav-support'), 'PC：上部メニューにサポートがありません');
+    assert.ok(!(await page.isVisible('.nav-item.menu-btn')), '前提：PC では「その他」ボタンを出さない');
+    await page.click('#nav-support');
+    await page.waitForSelector('.backdrop .rf');
+    await page.screenshot({ path: `${SHOTS}/pc-nav-support.png` });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+  // スマートフォンの下部ナビには出さない（「その他」から開く）
+  const ph = await openPhone();
+  try {
+    await boot(ph.page); await startAsVeteran(ph.page);
+    assert.equal(await ph.page.isVisible('#nav-support'), false, 'スマートフォンの下部ナビにサポートが出ています');
+  } finally { await ph.context.close(); }
+});
+
 // ===== 通貨表示 =====
 
 // 上部の通貨表示：すべての通貨がヘッダーの中に見切れずに収まり、横にはみ出さないこと
@@ -2223,7 +2295,8 @@ async function openReport(page, { configured = true } = {}) {
   await boot(page);
   await startAsVeteran(page);
   if (configured) await page.evaluate((u) => { AL.CONFIG.REPORT.ENDPOINT = u; AL.CONFIG.REPORT.COOLDOWN_SEC = 0; }, REPORT_URL);
-  await page.evaluate(() => { AL.UI.show('settings'); });
+  // サポート（報告フォーム）は「その他」画面のタイル（1.10.1 で設定画面のパネルから移動）
+  await page.evaluate(() => { AL.UI.show('menu'); });
   await page.click('#open-report');
   await page.waitForSelector('.backdrop .rf');
 }
@@ -2247,7 +2320,7 @@ const fakeServer = async (page, handler) => {
 };
 const okReply = (id = 'BR-20261117-0001') => (route) => route.fulfill({ status: 200, headers: CORS, contentType: 'application/json', body: JSON.stringify({ ok: true, id }) });
 
-test('報告フォーム：設定画面の入口から開閉でき、開く・閉じるだけではセーブが変わらない。既存の設定画面は動く', async () => {
+test('報告フォーム：その他画面のサポートから開閉でき、開く・閉じるだけではセーブが変わらない。既存の設定画面は動く', async () => {
   const { context, page, errors } = await openPhone();
   try {
     await boot(page);
@@ -2258,10 +2331,11 @@ test('報告フォーム：設定画面の入口から開閉でき、開く・�
     const before = await snap();
     // 既存の設定画面の項目が残っている
     const txt = await page.locator('#screen').innerText();
-    for (const t of ['戦闘速度', '演出の品質', '今すぐ保存', '書き出し（ファイル）', 'データを初期化', '遊び方', '不具合・ご意見を報告する']) assert.ok(txt.includes(t), `設定画面に「${t}」がありません`);
+    for (const t of ['戦闘速度', '演出の品質', '今すぐ保存', '書き出し（ファイル）', 'データを初期化', '遊び方']) assert.ok(txt.includes(t), `設定画面に「${t}」がありません`);
     await page.evaluate(() => AL.UI.show('menu'));
     assert.ok((await page.locator('#screen').innerText()).includes('v' + await page.evaluate(() => AL.CONFIG.GAME_VERSION)), 'メニューのバージョン表示');
-    await page.evaluate(() => AL.UI.show('settings'));
+    assert.ok(!txt.includes('不具合・ご意見を報告する') && !txt.includes('サポート'), '設定画面にサポートのパネルが残っています（その他のタイルへ移動した）');
+    await page.evaluate(() => AL.UI.show('menu'));
     await page.click('#open-report');
     assert.equal(await page.locator('.backdrop .modal').count(), 1);
     assert.match(await page.locator('#rf-noconf').innerText(), /送信先がまだ設定されていない/, '未設定のとき、送信できない旨を表示する');
@@ -2275,7 +2349,8 @@ test('報告フォーム：設定画面の入口から開閉でき、開く・�
     await page.click('.modal-close');
     const after = await snap();
     assert.deepEqual(after, before, '開く・閉じるだけでセーブ・状態が変わりました');
-    // 既存の設定操作（演出の品質）が動く
+    // 既存の設定操作（演出の品質）が動く（入口はその他画面に移ったため、設定画面に戻って確かめる）
+    await page.evaluate(() => AL.UI.show('settings'));
     await page.click('[data-act="setFx"][data-v="low"]');
     assert.equal(await page.evaluate(() => AL.Game.state.settings.effects), 'low');
     assert.deepEqual(errors, []);
@@ -2509,7 +2584,7 @@ test('報告機能が使えなくても（未設定・通信不能・fetch な�
     await page.evaluate(() => AL.UI.show('battle'));
     assert.equal(await page.locator('.backdrop').count(), 0);
     // 送信先が未設定のままでも、画面操作で例外が出ない
-    await page.evaluate(() => { AL.CONFIG.REPORT.ENDPOINT = ''; AL.UI.show('settings'); });
+    await page.evaluate(() => { AL.CONFIG.REPORT.ENDPOINT = ''; AL.UI.show('menu'); });
     await page.click('#open-report');
     assert.equal(await page.locator('#rf-next').isDisabled(), true);
     assert.deepEqual(errors.filter((e) => !/Failed to load resource|net::ERR/.test(e)), []);
