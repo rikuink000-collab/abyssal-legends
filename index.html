@@ -136,7 +136,7 @@ body:not(.tab-battle) #mini-status { display: flex; }
 .nav-item.active .ni { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; box-shadow: 0 0 14px rgba(139, 108, 255, 0.5); }
 .nav-item.more-only { display: none; }
 .badge { position: absolute; top: 2px; right: calc(50% - 22px); min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--bad); color: #fff; font-size: 10px; font-weight: 800; display: grid; place-items: center; }
-.nav-item .badge:empty { display: none; }
+.badge:empty { display: none; }   /* 数字のない通知バッジは出さない（下部ナビ・その他のタイル共通） */
 
 /* ===== パネル・ボタン ===== */
 .panel { background: linear-gradient(180deg, var(--panel), var(--bg2)); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; margin-bottom: 10px; }
@@ -197,15 +197,40 @@ label.toggle:last-child { border-bottom: none; }
 .waves i.boss { width: 30px; background: #4a1020; border-color: #ff4a6a; }
 .boss-prog { flex: 1; min-width: 140px; }
 .boss-prog .tiny { display: flex; justify-content: space-between; }
+/* 「周回中」などで横幅が狭くなっても、文言を途中で折り返さない（地形名は収まらなければ省略） */
+.boss-prog .tiny span { white-space: nowrap; }
+.boss-prog .tiny { gap: 6px; min-width: 0; }
+.boss-prog #hud-biome { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .canvas-wrap { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--line2); background: #000; box-shadow: 0 6px 30px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.03); }
 .canvas-wrap canvas { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; }
 .canvas-wrap .overlay-tr { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; }
-.canvas-wrap .overlay-tl { position: absolute; top: 6px; left: 6px; font-size: 12px; background: rgba(0, 0, 0, 0.5); padding: 2px 8px; border-radius: 6px; }
-.controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px 0; }
+/* 総戦力（金色・大きく）と戦闘速度ボタン。数値が長くなっても1行で収め、はみ出さない */
+.power-row { display: flex; align-items: center; gap: 6px; padding: 0 0 6px; min-width: 0; flex-wrap: wrap; }
+/* 再挑戦・次の階層へ：出るときだけ総戦力の下に1行で出す（総戦力の数値を狭めない） */
+.power-row #btn-challenge { order: 3; flex: 1 1 100%; }
+.power-box { flex: 1 1 0; min-width: 0; display: flex; align-items: baseline; gap: 6px; min-height: 44px; padding: 4px 10px; border-radius: 10px; cursor: pointer; text-align: left; color: inherit;
+  background: linear-gradient(90deg, rgba(255, 204, 77, 0.16), rgba(255, 204, 77, 0.03)); border: 1px solid rgba(255, 204, 77, 0.45); overflow: hidden; white-space: nowrap; }
+.power-box .pw-label { font-size: 12px; color: #e9d7a0; font-weight: 700; flex: none; align-self: center; }
+.power-box .pw-val { font-size: clamp(20px, 6.2vw, 26px); font-weight: 900; color: var(--gold); line-height: 1.2; letter-spacing: 0.01em; text-shadow: 0 0 10px rgba(255, 204, 77, 0.35); flex: none; }
+.power-box .pw-diff { font-size: 12px; font-weight: 800; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: clip; }
+.power-box .pw-diff.up { color: var(--good); }
+.power-box .pw-diff.down { color: var(--bad); }
+.power-box .pw-more { margin-left: auto; color: var(--sub); font-size: 18px; align-self: center; flex: none; }
+.power-row .btn { flex: none; min-height: 44px; }
+.power-row .speed-btn { min-width: 52px; font-weight: 800; font-size: 15px; }
+.floor-label .loop-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 6px; font-size: 11px; line-height: 18px; vertical-align: middle; font-weight: 700; color: var(--warn); border: 1px solid rgba(255, 165, 58, 0.6); background: rgba(255, 165, 58, 0.12); }
+.pw-total { font-size: 32px; font-weight: 900; color: var(--gold); line-height: 1.2; }
+.pw-list { display: flex; flex-direction: column; gap: 4px; }
+.pw-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 4px 8px; border-radius: 8px; background: var(--panel2); border: 1px solid var(--line); color: inherit; cursor: pointer; text-align: left; }
+.pw-row img { width: 32px; height: 32px; flex: none; }
+.adv-row { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.adv-row .btn { min-width: 64px; }
 .dungeon-banner { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: linear-gradient(90deg, rgba(197, 92, 255, 0.25), rgba(139, 108, 255, 0.1)); border: 1px solid #8a5aff; margin-bottom: 6px; }
 .party-cards { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; padding-bottom: 8px; }
 .pc { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px; position: relative; min-width: 0; cursor: pointer; }
 .pc.dead { opacity: 0.45; filter: grayscale(0.7); }
+.pc.sel { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 10px rgba(255, 204, 77, 0.35); }
+.pc.dead .hp-cur { color: var(--bad); font-weight: 700; }
 .pc .pc-top { display: flex; align-items: center; gap: 2px; }
 .pc img { width: 32px; height: 32px; flex: 0 0 auto; }
 .pc .pc-name { font-size: 11px; font-weight: 700; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -591,7 +616,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.8.0',
+    GAME_VERSION: '1.10.0',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -5081,7 +5106,8 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
 
   var Scene = AL.Scene = {
     canvas: null, ctx: null, k: 1, vs: {}, fx: [], texts: [], projs: [], banner: null, shake: 0, shakeT: 0,
-    flash: null, lastSeq: 0, battle: null, scroll: 0, bgCache: {}, lastNow: 0, motes: [], bossMode: false
+    flash: null, lastSeq: 0, battle: null, scroll: 0, bgCache: {}, lastNow: 0, motes: [], bossMode: false,
+    selected: null   // 選択中の味方の uid（描画だけに使う。戦闘には影響しない）
   };
 
   Scene.init = function (canvas) {
@@ -5595,21 +5621,26 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
       }
     }
     ctx.globalAlpha = 1;
-    // HPバー（ボスは上部に表示）
+    // 選択中の仲間（下部のカードをタップ・ポインターを重ねたとき）：足元の輪と頭上の印で、カードとキャラクターを対応づける
+    if (u.side === 'ally' && Scene.selected === u.uid) {
+      var pulse = 0.6 + 0.4 * Math.sin(t * 6);
+      ctx.globalAlpha = 1; ctx.strokeStyle = S.rgba('#ffcc4d', 0.9 * pulse); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.ellipse(v.x + ox, v.y - 1, size * 0.4, size * 0.11, 0, 0, 7); ctx.stroke();
+      var mx = Math.round(v.x + ox), my = y - 12 + Math.round(Math.sin(t * 5) * 1.5);
+      ctx.fillStyle = '#ffcc4d'; ctx.beginPath(); ctx.moveTo(mx - 4, my); ctx.lineTo(mx + 4, my); ctx.lineTo(mx, my + 4); ctx.closePath(); ctx.fill();
+    }
+    // HPバー：敵だけ頭上に出す（ボスは上部に表示）。味方のHP・スキル待機は下部のカードにまとめている
     if (u.alive && !isBoss) {
       var bw = 28, bx = Math.round(v.x - bw / 2 + ox), by = y - 3;
-      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(bx - 1, by - 1, bw + 2, 4);
-      var r = u.hp / u.maxHp;
-      ctx.fillStyle = u.side === 'ally' ? (r > 0.5 ? '#5fe08a' : (r > 0.25 ? '#ffd84a' : '#ff5a5a')) : '#ff5a6a';
-      ctx.fillRect(bx, by, Math.max(0, Math.round(bw * r)), 2);
-      var shv = 0; u.statuses.forEach(function (s) { if (s.id === 'shield') shv += s.value; });
-      if (shv > 0) { ctx.fillStyle = '#bfe8ff'; ctx.fillRect(bx, by + 2, Math.min(bw, Math.round(bw * shv / u.maxHp)), 1); }
-      // スキル待機
-      if (u.side === 'ally' && u.skill) {
-        var cdr = 1 - Math.min(1, u.cd / (u.skill.cd * (1 - u.cdr)));
-        ctx.fillStyle = cdr >= 1 ? '#7ad8ff' : '#2a5a7a'; ctx.fillRect(bx, by + 3, Math.round(bw * cdr), 1);
+      if (u.side !== 'ally') {
+        ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(bx - 1, by - 1, bw + 2, 4);
+        var r = u.hp / u.maxHp;
+        ctx.fillStyle = '#ff5a6a';
+        ctx.fillRect(bx, by, Math.max(0, Math.round(bw * r)), 2);
+        var shv = 0; u.statuses.forEach(function (s) { if (s.id === 'shield') shv += s.value; });
+        if (shv > 0) { ctx.fillStyle = '#bfe8ff'; ctx.fillRect(bx, by + 2, Math.min(bw, Math.round(bw * shv / u.maxHp)), 1); }
       }
-      // 状態アイコン
+      // 状態アイコン（味方・敵とも頭上に残す）
       var icons = u.statuses.filter(function (s) { return D.STATUSES[s.id] && s.id !== 'shield'; }).slice(0, 5);
       icons.forEach(function (s, i2) {
         var sd = D.STATUSES[s.id];
@@ -5897,12 +5928,13 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
       '<div id="dungeon-banner"></div>' +
       '<div class="hud"><div class="floor-label" id="hud-floor"></div><div class="waves" id="hud-waves"></div>' +
       '<div class="boss-prog"><div class="tiny sub"><span id="hud-boss-text"></span><span id="hud-biome"></span></div><div class="bar boss"><i id="hud-boss-bar"></i></div></div></div>' +
-      '<div class="canvas-wrap"><canvas id="scene" aria-label="戦闘画面"></canvas><div class="overlay-tl num" id="hud-kills"></div>' +
-      '<div class="overlay-tr"><button class="btn sm" data-act="idleOpen" id="hud-idle" style="display:none">放置報酬</button></div></div>' +
-      '<div class="controls"><div class="seg" id="speed-seg">' + C.BATTLE.SPEEDS.map(function (s) { return '<button data-act="setSpeed" data-v="' + s + '">×' + s + '</button>'; }).join('') + '</div>' +
-      '<button class="btn sm" data-act="toggleAdvance" id="btn-advance"></button>' +
+      // 総戦力（タップで内訳）・周回中の「次の階層へ」／再挑戦・戦闘速度（タップで ×1→×2→×3→×4→×1）
+      '<div class="power-row"><button class="power-box" data-act="powerDetail" id="hud-power-box" aria-label="総戦力の内訳を見る">' +
+      '<span class="pw-label">総戦力</span><b class="pw-val num" id="hud-power"></b><span class="pw-diff num" id="hud-power-diff"></span><span class="pw-more" aria-hidden="true">›</span></button>' +
       '<button class="btn sm gold" data-act="challenge" id="btn-challenge" style="display:none">ボスに挑戦</button>' +
-      '<span class="grow"></span><span class="tiny sub num" id="hud-power"></span></div>' +
+      '<button class="btn sm speed-btn num" data-act="cycleSpeed" id="btn-speed" aria-label="戦闘速度を切り替える"></button></div>' +
+      '<div class="canvas-wrap"><canvas id="scene" aria-label="戦闘画面"></canvas>' +
+      '<div class="overlay-tr"><button class="btn sm" data-act="idleOpen" id="hud-idle" style="display:none">放置報酬</button></div></div>' +
       '<div class="party-cards" id="party-cards"></div>';
     AL.Scene.init(UI.$('#scene'));
   };
@@ -5916,7 +5948,9 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     var fl = R.currentFloor(), biome = AL.Progress.biome(fl);
     var hf = UI.$('#hud-floor');
     var inT = R.mode === 'tutorial';
-    var ftxt = inT ? 'はじめての戦い<small></small>' : inD ? esc(AL.Progress.dungeon(R.run.id).name) + '<small>難易度' + R.run.tier + '</small>' : '第' + t.floor + '層<small>' + (AL.Progress.isBossFloor(t.floor) ? 'ボス階層' : '') + '</small>';
+    // 自動進行がOFF（周回中）のときだけ、階層の横に「周回中」と出す
+    var looping = !inT && !inD && !t.autoAdvance;
+    var ftxt = inT ? 'はじめての戦い<small></small>' : inD ? esc(AL.Progress.dungeon(R.run.id).name) + '<small>難易度' + R.run.tier + '</small>' : '第' + t.floor + '層<small>' + (AL.Progress.isBossFloor(t.floor) ? 'ボス階層' : '') + '</small>' + (looping ? '<span class="loop-tag" id="hud-loop">周回中</span>' : '');
     if (hf._v !== ftxt) { hf.innerHTML = ftxt; hf._v = ftxt; }
     var wv = UI.$('#hud-waves'), wh = '';
     if (inD) {
@@ -5932,19 +5966,16 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     UI.$('#hud-biome').textContent = biome.name;
     var prog = inD ? 1 : (nb === 0 ? 1 : (C.TOWER.BOSS_INTERVAL - nb + t.wave / C.TOWER.WAVES_PER_FLOOR) / C.TOWER.BOSS_INTERVAL);
     UI.$('#hud-boss-bar').style.width = (prog * 100).toFixed(1) + '%';
-    UI.$('#hud-kills').textContent = '撃破 ' + U.fmt(R.session.kills) + '　EXP +' + U.fmt(R.session.exp) + '　G +' + U.fmt(R.session.gold);
     UI.$('#hud-idle').style.display = AL.Game.pendingIdle ? '' : 'none';
-    // 操作
-    UI.$$('#speed-seg button').forEach(function (bt) { bt.classList.toggle('on', +bt.dataset.v === st.settings.speed); });
-    var adv = UI.$('#btn-advance');
-    var advTxt = t.autoAdvance ? '自動進行：ON' : '周回中（進行OFF）';
-    if (adv.textContent !== advTxt) adv.textContent = advTxt;
-    adv.style.display = inD ? 'none' : '';
+    // 操作：戦闘速度は1つのボタン（今の倍率を表示）
+    var spB = UI.$('#btn-speed'), spT = '×' + st.settings.speed;
+    if (spB.textContent !== spT) spB.textContent = spT;
     var ch = UI.$('#btn-challenge');
-    var showCh = !inD && (t.blockedFloor > 0 || (!t.autoAdvance && t.floor < t.maxFloor));
+    var showCh = !inD && !inT && (t.blockedFloor > 0 || (!t.autoAdvance && t.floor < t.maxFloor));
     ch.style.display = showCh ? '' : 'none';
-    ch.textContent = t.blockedFloor ? '第' + t.blockedFloor + '層に再挑戦' : '次の階層へ';
-    UI.$('#hud-power').textContent = '戦力 ' + U.fmt(AL.Stats.partyPower(st));
+    var chT = t.blockedFloor ? '第' + t.blockedFloor + '層に再挑戦' : '次の階層へ';
+    if (ch.textContent !== chT) ch.textContent = chT;
+    UI.tickPower(st);
     // ダンジョンバナー
     var db = UI.$('#dungeon-banner');
     var dbh = inD ? '<div class="dungeon-banner"><b class="grow">【' + esc(AL.Progress.dungeon(R.run.id).name) + '】挑戦中' + (R.run.affixes.length ? '　<span class="tiny">変異：' + R.run.affixes.map(function (a) { return D.AFFIXES[a].name; }).join('・') + '</span>' : '') + '</b><button class="btn sm danger" data-act="abandonDungeon">撤退</button></div>' : '';
@@ -5956,21 +5987,30 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
       partySig = sig;
       pc.innerHTML = b.allies.map(function (u) {
         var hd = D.HEROES[u.refId];
-        return '<div class="pc" data-act="heroDetail" data-id="' + u.refId + '" id="pc-' + u.uid + '"><div class="pc-top">' + UI.heroImg(u.refId, 32) +
+        return '<div class="pc" data-act="pcSelect" data-id="' + u.refId + '" data-uid="' + u.uid + '" id="pc-' + u.uid + '"><div class="pc-top">' + UI.heroImg(u.refId, 32) +
           '<div style="min-width:0"><div class="pc-lv">Lv' + st.heroes[u.refId].lv + '</div><span class="tagx" style="background:' + D.ROLES[hd.role].color + '">' + D.ROLES[hd.role].short + '</span></div></div>' +
           '<div class="pc-name">' + esc(U.shortName(hd.name)) + '</div>' +
           '<div class="bar hp"><i></i></div><div class="pc-hp"><span class="hp-cur"></span><span class="hp-max"></span></div><div class="bar cd"><i></i></div><div class="sts"></div></div>';
       }).join('');
+      // ポインターを重ねている間（PC）は、対応するキャラクターに選択の印を出す
+      UI.$$('#party-cards .pc').forEach(function (c) {
+        c.addEventListener('pointerenter', function (e) { if (e.pointerType === 'mouse') UI.selectAlly(c.dataset.uid, 0); });
+        c.addEventListener('pointerleave', function (e) { if (e.pointerType === 'mouse' && !selUntil) UI.selectAlly(null); });   // タップで選んだときは、時間が過ぎるまで残す
+      });
     }
+    var selU = AL.Scene.selected;
+    if (selU && selUntil && Date.now() > selUntil && !UI.topModal('hero')) UI.selectAlly(null);
     b.allies.forEach(function (u) {
       var el = UI.$('#pc-' + u.uid); if (!el) return;
       var r = u.hp / u.maxHp;
       el.classList.toggle('dead', !u.alive);
+      el.classList.toggle('sel', AL.Scene.selected === u.uid);
       var hb = el.querySelector('.bar.hp');
       hb.className = 'bar hp' + (r < 0.25 ? ' low' : (r < 0.5 ? ' mid' : ''));
       hb.firstChild.style.width = (r * 100).toFixed(1) + '%';
       // 現在値と「/最大値」は別々の要素。カードが狭いときは、その間で2行に折り返す（数値は省略しない）
-      var hc = el.querySelector('.hp-cur'), hm = el.querySelector('.hp-max'), hct = U.fmt(u.hp), hmt = '/' + U.fmt(u.maxHp);
+      // 戦闘不能のときは「0/最大HP」ではなく「戦闘不能」と出す
+      var hc = el.querySelector('.hp-cur'), hm = el.querySelector('.hp-max'), hct = u.alive ? U.fmt(u.hp) : '戦闘不能', hmt = u.alive ? '/' + U.fmt(u.maxHp) : '';
       if (hc.textContent !== hct) hc.textContent = hct;
       if (hm.textContent !== hmt) hm.textContent = hmt;
       var cdb = el.querySelector('.bar.cd'), cdr = u.skill ? 1 - Math.min(1, u.cd / Math.max(0.01, u.skill.cd * (1 - u.cdr))) : 0;
@@ -5994,12 +6034,73 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     if (UI.current === 'battle') UI.tickBattleScreen();
   };
 
-  UI.action('setSpeed', function (el) { UI.st().settings.speed = +el.dataset.v; UI.tickBattle(); });
+  // 戦闘速度：タップするたびに ×1→×2→×3→×4→×1（値と保存先は設定画面の「戦闘速度」と同じ settings.speed）
+  UI.action('cycleSpeed', function () {
+    var st = UI.st(), L = C.BATTLE.SPEEDS, i = L.indexOf(st.settings.speed);
+    st.settings.speed = L[(i + 1) % L.length];
+    UI.tickBattle();
+  });
   UI.action('toggleAdvance', function () {
     var t = UI.st().tower;
     AL.Game.runner.setAutoAdvance(!t.autoAdvance);
     UI.toast(t.autoAdvance ? '自動で次の階層へ進みます' : '現在の階層を周回します');
     UI.tickBattle();
+    if (UI.current === 'battle') UI.render();
+  });
+
+  // ---- 総戦力：表示・増減の一時表示・内訳 ----
+  // 値は AL.Stats.partyPower（編成画面の総戦力と同じ計算）をそのまま使う。
+  // 増減は、戦闘パネルが見えているときに前回見えていた値と比べて出す（他の画面で装備・強化してから戻ったときも分かる）
+  var pw = { shown: null, diff: 0, until: 0 };
+  UI.POWER_DIFF_MS = 4000;
+  UI.tickPower = function (st) {
+    var val = AL.Stats.partyPower(st), el = UI.$('#hud-power'), de = UI.$('#hud-power-diff');
+    if (!el) return;
+    var vt = U.fmt(val);
+    if (el.textContent !== vt) el.textContent = vt;
+    var visible = UI.$('#battle-panel').offsetParent !== null, now = Date.now();
+    if (visible) {
+      if (pw.shown !== null && val !== pw.shown && AL.Game.runner.mode !== 'tutorial') {
+        pw.diff = (now < pw.until ? pw.diff : 0) + (val - pw.shown);
+        pw.until = now + UI.POWER_DIFF_MS;
+      }
+      pw.shown = val;
+    }
+    var dt = '', dc = 'pw-diff num';
+    if (now < pw.until && Math.abs(pw.diff) >= 1) { dt = (pw.diff > 0 ? '▲' : '▼') + U.fmt(Math.abs(pw.diff)); dc += pw.diff > 0 ? ' up' : ' down'; }
+    if (de.textContent !== dt) de.textContent = dt;
+    if (de.className !== dc) de.className = dc;
+  };
+  UI.action('powerDetail', function () {
+    var st = UI.st(), syn = AL.Stats.synergies(st.party), total = AL.Stats.partyPower(st);
+    var rows = st.party.map(function (id) {
+      if (!id) return '';
+      var s = AL.Stats.hero(st, id, { synergy: AL.Stats.synergyBonusFor(id, syn) }), hd = D.HEROES[id];
+      if (!s) return '';
+      return '<button class="pw-row" data-act="heroDetail" data-id="' + id + '">' + UI.heroImg(id, 32) +
+        '<span class="grow ellipsis">' + esc(hd.name) + ' <span class="tiny sub">Lv' + st.heroes[id].lv + '</span></span><b class="gold num">' + U.fmt(s.power) + '</b></button>';
+    }).join('');
+    UI.modal({
+      id: 'power', title: '総戦力の内訳',
+      html: '<div class="center"><div class="tiny sub">総戦力（相性込み）</div><div class="pw-total num">' + U.fmt(total) + '</div></div>' +
+        '<h3 class="mt">仲間ごとの戦闘力</h3><div class="pw-list">' + rows + '</div>' +
+        '<h3 class="mt">発動中の相性</h3>' + (syn.length ? syn.map(function (x) { return '<div class="syn on"><b>' + esc(x.name) + '</b>　<span class="small">' + esc(x.desc) + '</span></div>'; }).join('') : '<div class="dim small">なし（編成で同じ属性・役割をそろえると発動します）</div>') +
+        '<div class="tiny dim mt">戦闘力は強さの目安です。仲間をタップすると詳細を確認できます。</div>',
+      buttons: [{ label: '閉じる' }]
+    });
+  });
+
+  // ---- 仲間カードと戦闘画面のキャラクターの対応：選んだ仲間に印を出す（描画だけ。戦闘には影響しない） ----
+  var selUntil = 0;
+  UI.SELECT_MS = 2500;
+  UI.selectAlly = function (uid, ms) {
+    AL.Scene.selected = uid == null ? null : String(uid);
+    selUntil = uid == null || !ms ? 0 : Date.now() + ms;
+    UI.$$('#party-cards .pc').forEach(function (c) { c.classList.toggle('sel', uid != null && String(c.dataset.uid) === String(uid)); });
+  };
+  UI.action('pcSelect', function (el) {
+    UI.selectAlly(el.dataset.uid, UI.SELECT_MS);
+    UI.heroDetail(el.dataset.id);
   });
   UI.action('challenge', function () { AL.Game.runner.challenge(); UI.toast('挑戦します！'); });
   UI.action('miniStatus', function () { UI.show('battle'); });
@@ -6026,6 +6127,10 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
         '<div class="kv"><span>現在の階層</span><b>第' + t.floor + '層</b></div>' +
         '<div class="kv"><span>今回の最高到達</span><b>第' + t.maxFloor + '層</b></div>' +
         '<div class="kv"><span>通算の最高到達</span><b>第' + st.stats.maxFloorEver + '層</b></div>' +
+        // 自動進行の切り替え（戦闘パネルから移動。処理は runner.setAutoAdvance のまま）
+        (AL.Game.runner.mode === 'dungeon' ? '' : '<div class="row between adv-row"><div class="grow"><div>自動進行</div><div class="tiny dim">' +
+          (t.autoAdvance ? '階層を突破すると次の階層へ進みます' : '今の階層を周回しています（戦闘画面の「次の階層へ」で進めます）') + '</div></div>' +
+          '<button class="btn sm' + (t.autoAdvance ? ' primary' : '') + '" data-act="toggleAdvance" id="btn-advance" aria-pressed="' + (t.autoAdvance ? 'true' : 'false') + '">' + (t.autoAdvance ? 'ON' : 'OFF') + '</button></div>') +
         (t.blockedFloor ? '<div class="notice">第' + t.blockedFloor + '層で敗北したため、第' + Math.max(1, t.blockedFloor - 1) + '層で態勢を整えています。' + (st.settings.autoBoss ? '（1階層周回ごとに自動で再挑戦）' : '（自動再挑戦はOFF）') + '</div>' : '') +
         '<div class="row wrap mt"><span class="sub small">移動先：</span><div class="stepper"><button class="btn sm" data-act="floorStep" data-v="-10">-10</button><button class="btn sm" data-act="floorStep" data-v="-1">-1</button><b id="floor-target">' + (UI.ui.floorTarget || t.floor) + '</b><button class="btn sm" data-act="floorStep" data-v="1">+1</button><button class="btn sm" data-act="floorStep" data-v="10">+10</button></div>' +
         '<button class="btn sm primary" data-act="gotoFloor">移動</button></div><div class="tiny dim">到達済みの階層（第' + t.maxFloor + '層まで）へ移動できます。</div></div>' +
