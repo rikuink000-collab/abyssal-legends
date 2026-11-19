@@ -86,7 +86,7 @@ test('セーブの形式・保存キーは変わらない（SAVE_VERSION 3）', 
   assert.equal(AL.CONFIG.SAVE_VERSION, 3);
   assert.equal(AL.CONFIG.SAVE_KEY, 'abyssal_legends_save');
   assert.equal(AL.CONFIG.BACKUP_KEY, 'abyssal_legends_save_backup');
-  assert.equal(AL.CONFIG.GAME_VERSION, '1.10.0');   // 戦闘画面のUI改善（1.10.0）で更新。セーブ関連の3項目は変えていない
+  assert.equal(AL.CONFIG.GAME_VERSION, '1.10.1');   // サポートをその他のタイルへ移動（1.10.1）で更新。セーブ関連の3項目は変えていない
 });
 
 // ── 重い端末への自動調整（AL.Fx.perf）：fx.js の区画だけを、架空の AL・PixelFX の上で動かして確かめる ──

@@ -618,7 +618,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.10.0',
+    GAME_VERSION: '1.10.1',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -5730,6 +5730,7 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
   };
 
   UI.NAV_ORDER = ['battle', 'heroes', 'quests', 'equip', 'gacha', 'menu'];
+  UI.SUPPORT_ICON = '問';   // サポート（不具合・ご意見の報告）のアイコン。その他の機能と同じく漢字1文字
   function navRank(id) { var i = UI.NAV_ORDER.indexOf(id); return i >= 0 ? i : 100 + UI.order.indexOf(id); }
   UI.renderNav = function () {
     var nav = UI.$('#nav');
@@ -5744,6 +5745,8 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
       var cls = 'nav-item' + (on ? ' active' : '') + (s.nav === 'more' ? ' more-only' : '') + (id === 'menu' ? ' menu-btn' : '');
       html += '<button class="' + cls + '" data-act="nav" data-id="' + id + '"><span class="ni">' + s.icon + '</span><span>' + s.name + '</span><span class="badge" id="badge-' + id + '"></span></button>';
     });
+    // 広い画面では「その他」画面を使わないため、サポート（報告フォーム）も上部のメニューに並べる（スマートフォンでは「その他」のタイル）
+    html += '<button class="nav-item more-only" id="nav-support" data-id="support" data-act="openReport"><span class="ni">' + UI.SUPPORT_ICON + '</span><span>サポート</span></button>';
     nav.innerHTML = html;
     UI.updateBadges();
   };
@@ -6812,7 +6815,10 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
         var s = UI.screens[id];
         if (!AL.Guide.unlocked(UI.st(), id)) return '<button class="menu-tile locked" disabled><span class="ni">🔒</span>' + s.name + '<span class="lock">' + esc(UI.lockText(id)) + '</span></button>';
         return '<button class="menu-tile" data-act="nav" data-id="' + id + '"><span class="ni">' + s.icon + '</span>' + s.name + '<span class="badge" id="badge-m-' + id + '"></span></button>';
-      }).join('') + '</div>' +
+      }).join('') +
+      // サポート：設定の隣。不具合・ご意見の報告フォーム（AL.Report）を開くだけ（画面は増やさない）
+      '<button class="menu-tile" id="open-report" data-act="openReport" aria-label="サポート（不具合・ご意見を報告する）"><span class="ni">' + UI.SUPPORT_ICON + '</span>サポート</button>' +
+      '</div>' +
       '<div class="panel mt"><div class="small sub">ABYSSAL LEGENDS v' + C.GAME_VERSION + '</div><div class="tiny dim">セーブデータはこの端末のブラウザ内に保存されます。機種変更やブラウザのデータ削除に備えて、設定画面からバックアップを書き出してください。</div><div class="tiny dim mt-s">戦闘演出：pixelfx（MIT License）© Patch, Hugo Duprez　github.com/patch-gg/pixelfx</div></div>';
       UI.updateBadges();
     }
@@ -7139,7 +7145,6 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
         '<div class="btn-group mt"><label class="btn"><input type="file" accept=".json,application/json,text/plain" data-change="importFile" style="display:none">ファイルを選択</label></div>' +
         '<textarea id="import-text" class="mt" placeholder="ここにセーブデータのテキストを貼り付け"></textarea><button class="btn block mt" data-act="importText">テキストから読み込む</button></div>' +
         '<div class="panel" style="border-color:rgba(255,90,106,0.5)"><h3 class="bad">初期化</h3><div class="small sub">すべての進行を削除して最初から始めます。この操作は取り消せません。</div><button class="btn danger block mt" data-act="resetAll">データを初期化</button></div>' +
-        '<div class="panel"><h3>サポート</h3><div class="small sub">不具合やご意見を、ゲームから直接お送りいただけます。セーブデータや所持品は送信しません。</div><button class="btn block mt" id="open-report" data-act="openReport">不具合・ご意見を報告する</button></div>' +
         '<div class="panel"><h3>遊び方</h3><div class="small sub">戦闘は自動で進みます。仲間の編成・装備・レベルを整えて、より深い階層を目指しましょう。10階層ごとにボスが出現します。第' + C.REBIRTH.MIN_FLOOR + '層に到達すると転生でき、永続的な強化を得られます。ゲームを閉じていても最大' + C.IDLE.BASE_MAX_HOURS + '時間分の放置報酬が貯まります。</div></div>';
     }
   });
