@@ -357,6 +357,25 @@ label.toggle:last-child { border-bottom: none; }
 .rf-opt { background: var(--panel2); color: var(--dim); }
 .rf select, .rf input[type=text], .rf input[type=email], .rf textarea { width: 100%; font-size: 16px; min-height: 44px; }
 .rf textarea { font-family: inherit; min-height: 110px; resize: vertical; }
+/* ランキング（js/ui/ranking.js） */
+.rk-join input[type=text] { width: 100%; font-size: 16px; min-height: 44px; }
+.rk-ul { margin: 4px 0 6px; padding-left: 20px; font-size: 13px; }
+.rk-ul li { margin: 2px 0; }
+.rk-rule { margin: -2px 2px 8px; }
+.rk-meta { margin-bottom: 6px; }
+.rk-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.rk-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 44px; padding: 6px 10px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); }
+.rk-row.me { border-color: #b9a6ff; background: linear-gradient(90deg, rgba(139, 108, 255, 0.25), var(--panel)); }
+.rk-rank { font-weight: 800; text-align: center; color: var(--sub); }
+.rk-row.top1 .rk-rank { color: #ffd04d; } .rk-row.top2 .rk-rank { color: #d8dde8; } .rk-row.top3 .rk-rank { color: #e0a070; }
+.rk-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.rk-rb { margin-left: 6px; font-weight: 600; }
+.rk-val { font-weight: 800; white-space: nowrap; }
+.rk-foot .btn-group { flex-wrap: wrap; }
+.rk-me { position: sticky; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 4px); z-index: 5; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--bg2); border: 1px solid #b9a6ff; box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.45); }
+.rk-me-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rk-me-rank { white-space: nowrap; }
+.rk-me-val { white-space: nowrap; font-size: 13px; color: var(--sub); }
 .rf input[type=email] { background: var(--bg2); border: 1px solid var(--line2); border-radius: 8px; padding: 8px 10px; }
 .rf-meta { display: flex; justify-content: space-between; gap: 8px; min-height: 16px; }
 .rf-err { color: var(--bad); font-size: 12px; }
@@ -618,7 +637,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.10.2',
+    GAME_VERSION: '1.11.0',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -4313,6 +4332,37 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     return { ok: true, name: name, error: null };
   };
 
+  // ---- NG ワード（簡易フィルター） ----
+  // 表示名は他のプレイヤーに見えるため、明らかに不適切な語と、運営・公式を名乗る名前を断る。
+  // 全角・半角・大文字小文字・カタカナ/ひらがなの違いと、間に挟んだ空白・記号は無視して、含まれているかで判定する。
+  // すべてを防ぐものではないため、残ったものは管理者がコンソールで非表示（hidden）にする。
+  K.NG_WORDS = [
+    // 暴言・差別
+    'しね', '死ね', '氏ね', 'ころす', '殺す', 'ころしてやる', 'きちがい', '基地外', 'きちげ', 'がいじ', 'ガイジ', '池沼', 'かたわ', 'めくら', 'つんぼ', 'しな人', '支那', 'ちょうせんじん',
+    'fuck', 'shit', 'bitch', 'cunt', 'asshole', 'nigger', 'nigga', 'faggot', 'retard', 'nazi', 'hitler', 'killyourself',
+    // 性的な語
+    'ちんこ', 'ちんぽ', 'ちんちん', 'まんこ', 'おまんこ', 'せっくす', 'えっち', 'おっぱい', 'ふぇら', 'あなる', 'れいぷ', 'ごうかん', '強姦', 'せーえき', '精液', 'おなに', '自慰', 'やりまん', 'びっち',
+    'sex', 'porn', 'penis', 'vagina', 'pussy', 'dick', 'whore', 'slut', 'rape', 'hentai',
+    // 運営・公式のなりすまし
+    '運営', 'うんえい', '公式', 'こうしき', '管理人', '管理者', 'かんりしゃ', 'admin', 'official', 'moderator', 'support', 'gamemaster'
+  ];
+  // 比べやすい形にそろえる：NFKC → 小文字 → カタカナをひらがなに → 空白と記号を取り除く
+  K.normalizeForNg = function (s) {
+    var t = String(s == null ? '' : s);
+    try { t = t.normalize('NFKC'); } catch (e) { /* normalize がない環境ではそのまま */ }
+    t = t.toLowerCase().replace(/[\u30A1-\u30F6]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0x60); });
+    return t.replace(/[\s\u3000・･.,、。_\-‐－―~〜～*＊!！?？\/|｜:;'"`^＾+=#＃@＠&＆%％$＄()（）\[\]「」『』【】<>＜＞{}]/g, '');
+  };
+  var NG_NORM = null;
+  // 不適切なら断る文言、問題なければ null（どの語に当たったかは表示しない）
+  K.ngCheck = function (name) {
+    if (!NG_NORM) NG_NORM = K.NG_WORDS.map(K.normalizeForNg).filter(Boolean);
+    var n = K.normalizeForNg(name);
+    if (n === 'gm') return 'この表示名は使えません。別の名前にしてください';
+    for (var i = 0; i < NG_NORM.length; i++) if (n.indexOf(NG_NORM[i]) >= 0) return 'この表示名は使えません。別の名前にしてください';
+    return null;
+  };
+
   // ---- 送る値（state から読むだけ） ----
   function int(v, max) { v = Math.floor(Number(v)); return isFinite(v) ? Math.max(0, Math.min(max, v)) : 0; }
   K.readValues = function (state) {
@@ -4340,12 +4390,13 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     };
   };
   K.saveOnline = function (o) { return !!(AL.Storage && AL.Storage.set(K.key(), JSON.stringify(o))); };
-  K.clearOnline = function () { if (AL.Storage) AL.Storage.remove(K.key()); K.session = { idToken: null, exp: 0, uid: null }; K.cache = {}; };
+  K.clearOnline = function () { if (AL.Storage) AL.Storage.remove(K.key()); K.session = { idToken: null, exp: 0, uid: null }; K.cache = {}; K.rankCache = {}; };
   K.joined = function () { return !!K.loadOnline(); };
 
   // メモリだけに置く情報（ID トークンは1時間で切れるため保存しない）
   K.session = { idToken: null, exp: 0, uid: null };
-  K.cache = {};        // kind → { at, list }
+  K.cache = {};        // kind → { at, list }（上位の一覧）
+  K.rankCache = {};    // kind → { at, result }（自分の順位。自分の記録を送ったら作り直す）
   K.busy = false;
 
   // ---- 通信の共通処理 ----
@@ -4487,7 +4538,8 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     if (K.busy) return Promise.resolve(fail('busy', 'busy', '通信中です'));
     var chk = K.validateName(rawName);
     if (!chk.ok) return Promise.resolve({ ok: false, kind: 'invalid', code: 'invalid', message: chk.error });
-    if (opts.ngCheck) { var ng = opts.ngCheck(chk.name); if (ng) return Promise.resolve({ ok: false, kind: 'invalid', code: 'ng', message: ng }); }
+    var ng = (opts.ngCheck || K.ngCheck)(chk.name);
+    if (ng) return Promise.resolve({ ok: false, kind: 'invalid', code: 'ng', message: ng });
     var values = K.readValues(state), prevOnline = K.loadOnline();
     K.busy = true;
     // 参加し直し（削除後など）で以前のログイン情報が残っていれば使い、なければ新しく匿名ログインする
@@ -4498,7 +4550,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       return K.commit(K.buildWrite(a.uid, chk.name, values, null), a.idToken, opts).then(function (r) {
         if (!r.ok) return r;
         var o = { v: 1, uid: a.uid, refreshToken: refresh, name: chk.name, last: values, sentAt: now(opts) };
-        K.saveOnline(o); K.cache = {};
+        K.saveOnline(o); K.cache = {}; K.rankCache = {};
         return { ok: true, name: chk.name, values: values };
       });
     }).then(function (r) { K.busy = false; return r; }, function () { K.busy = false; return fail('network', 'network', K.errorMessage('network')); });
@@ -4521,7 +4573,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       if (!a.ok) return a;
       return K.commit(K.buildWrite(o.uid, o.name, values, o.last), a.idToken, opts).then(function (r) {
         if (r.ok) {
-          o.last = values; o.sentAt = now(opts); K.saveOnline(o); K.cache = {};
+          o.last = values; o.sentAt = now(opts); K.saveOnline(o); K.rankCache = {};   // 上位の一覧はキャッシュの期限まで使い回す（読み取り回数を抑える）
           return { ok: true, values: values };
         }
         // 拒否・記録なし：サーバーの記録に合わせ直す（次回はその値との差で送る）
@@ -4617,6 +4669,11 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     var o = K.loadOnline();
     if (!o) return Promise.resolve({ ok: false, kind: 'not_joined', code: 'not_joined', message: 'ランキングに参加していません' });
     if (!K.configured()) return Promise.resolve(fail('config', 'config', K.errorMessage('config')));
+    var c = K.rankCache[kind];
+    if (!opts.force && c && now(opts) - c.at < K.cacheMs()) return Promise.resolve(c.result);
+    return myRankFetch(kind, o, opts).then(function (r) { if (r.ok) K.rankCache[kind] = { at: now(opts), result: r }; return r; });
+  };
+  function myRankFetch(kind, o, opts) {
     return K.getDoc(o.uid, opts).then(function (g) {
       if (!g.ok) return g;
       var e = g.entry;
@@ -4633,7 +4690,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
         });
       });
     });
-  };
+  }
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
@@ -7198,7 +7255,8 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
   UI.register({
     id: 'menu', name: 'その他', icon: '☰', nav: 'main',
     render: function (el) {
-      var tiles = ['quests', 'dungeon', 'rebirth', 'codex', 'achievements', 'shop', 'settings'];
+      // ランキングは接続先が設定されているときだけ（js/ui/ranking.js が画面を登録する）。設定・サポートは最終行のまま
+      var tiles = ['quests', 'dungeon', 'rebirth', 'codex', 'achievements', 'shop'].concat(UI.screens.ranking ? ['ranking'] : [], ['settings']);
       el.innerHTML = '<div class="screen-title">メニュー</div><div class="menu-grid">' + tiles.map(function (id) {
         var s = UI.screens[id];
         if (!AL.Guide.unlocked(UI.st(), id)) return '<button class="menu-tile locked" disabled><span class="ni">🔒</span>' + s.name + '<span class="lock">' + esc(UI.lockText(id)) + '</span></button>';
@@ -7792,6 +7850,194 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
+<script>/* js/ui/ranking.js */
+/* ABYSSAL LEGENDS - ランキング画面と、記録の自動送信
+ * 通信は AL.Ranking（js/core/ranking.js）。この区画はゲームの状態を「読むだけ」で、変更・保存はしません。
+ * 参加（「参加する」を押す）するまでは一切通信しません。接続先が未設定のときは画面も登録しません。
+ * 名前などの文字は、すべて esc() を通して表示します（HTML として解釈しない）。 */
+(function (G) {
+  'use strict';
+  var AL = G.AL = G.AL || {};
+  var U = AL.U, UI = AL.UI, K = AL.Ranking;
+  var esc = U.esc, ui = UI.ui;
+  if (!K || !K.configured()) return;
+
+  UI.RANKING_ICON = '順';
+  var TABS = [['floor', '階層'], ['rush', 'ボスラッシュ']];
+  // 画面の表示状態（メモリだけ）
+  var V = { tab: 'floor', loading: {}, error: {}, joining: false, joinError: null, leaving: false, name: '' };
+
+  function tab() { return ui.rankTab === 'rush' ? 'rush' : 'floor'; }
+  function fmtTime(t) { var d = new Date(t); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
+  function valueText(kind, e) { return kind === 'rush' ? U.fmt(e.rush) + '体' : '第' + U.fmt(e.floor) + '層'; }
+
+  // ---- 未参加：説明と参加フォーム ----
+  function joinHtml() {
+    var v = K.readValues(UI.st()), L = K.LIMITS;
+    return '<div class="panel rk-join">' +
+      '<h3>ランキングに参加する</h3>' +
+      '<div class="small sub">ほかのプレイヤーと、通算の最高到達階層・ボスラッシュの記録を競います。参加は任意です。<b>「参加する」を押すまで、何も送信しません。</b></div>' +
+      '<div class="rk-items mt"><div class="tiny dim">送信する項目（これ以外は送りません）</div><ul class="rk-ul">' +
+        '<li>表示名</li><li>通算の最高到達階層（いまは 第' + U.fmt(v.floor) + '層）</li><li>ボスラッシュ最高撃破数（いまは ' + U.fmt(v.rush) + '体）</li>' +
+        '<li>転生回数（いまは ' + U.fmt(v.rebirths) + '回。表示だけで順位には使いません）</li><li>到達・更新の時刻</li></ul>' +
+        '<div class="tiny dim">メールアドレスなどの個人情報や、セーブデータ・所持品は送りません。参加後は、記録が伸びたときに自動で送ります（60秒以上の間隔をあけます）。</div></div>' +
+      '<div class="rf-row mt"><label for="rk-name">表示名 <span class="rf-req">必須</span></label>' +
+        '<input type="text" id="rk-name" maxlength="' + (L.nameMax * 2) + '" autocomplete="off" enterkeyhint="done" placeholder="' + L.nameMax + '文字まで（ほかのプレイヤーに表示されます）">' +
+        '<div class="rf-meta"><span class="rf-err" id="rk-name-err" role="alert">' + (V.joinError ? esc(V.joinError) : '') + '</span><span class="tiny dim" id="rk-name-count"></span></div></div>' +
+      '<div class="tiny dim">表示名はあとから変えられません（変えたいときは、ランキングから削除して参加し直してください）。不適切な名前は、運営の判断で表示しないことがあります。</div>' +
+      '<button class="btn primary block mt" id="rk-join" data-act="rankJoin"' + (V.joining ? ' disabled' : '') + '>' + (V.joining ? '参加しています…' : '参加する') + '</button>' +
+      '</div>';
+  }
+
+  // ---- 参加後：タブ・一覧・自分の順位 ----
+  function listHtml(kind) {
+    var c = K.cache[kind], me = K.loadOnline();
+    if (V.error[kind] && !c) return '<div class="notice danger" id="rk-error" role="alert">' + esc(V.error[kind]) + '</div>';
+    if (!c) return '<div class="small sub rk-loading" id="rk-loading">読み込んでいます…</div>';
+    var list = c.list;
+    var head = (V.error[kind] ? '<div class="notice danger" id="rk-error" role="alert">' + esc(V.error[kind]) + '（前回の表示のままです）</div>' : '') +
+      '<div class="row between tiny dim rk-meta"><span>上位' + K.LIMITS.top + '人（' + fmtTime(c.at) + ' 時点）</span>' +
+      '<button class="btn sm ghost" data-act="rankReload"' + (V.loading[kind] ? ' disabled' : '') + '>' + (V.loading[kind] ? '更新中…' : '更新') + '</button></div>';
+    if (!list.length) return head + '<div class="small sub">まだ記録がありません。</div>';
+    return head + '<ol class="rk-list" id="rk-list">' + list.map(function (e) {
+      var mine = me && e.uid === me.uid;
+      return '<li class="rk-row' + (mine ? ' me' : '') + (e.rank <= 3 ? ' top' + e.rank : '') + '"><span class="rk-rank num">' + e.rank + '</span>' +
+        '<span class="rk-name">' + esc(e.name) + '<span class="rk-rb tiny dim">転生' + U.fmt(e.rebirths) + '</span></span>' +
+        '<span class="rk-val num">' + valueText(kind, e) + '</span></li>';
+    }).join('') + '</ol>';
+  }
+  function meHtml(kind) {
+    var me = K.loadOnline(), r = K.rankCache[kind] && K.rankCache[kind].result, c = K.cache[kind];
+    // 上位の一覧に自分がいれば、その順位を使う（件数の集計は非表示の記録も数えるため、一覧の順位のほうが正確）
+    var inList = me && c ? c.list.filter(function (e) { return e.uid === me.uid; })[0] : null;
+    var rank = '…', val = '';
+    if (r && r.ok) {
+      if (!r.entry) rank = '記録が見つかりません';
+      else if (r.entry.hidden) rank = '非表示になっています';
+      else if (r.rank == null) rank = kind === 'rush' ? 'まだ記録がありません' : '—';
+      else rank = U.fmt(inList ? inList.rank : r.rank) + '位';
+      if (r.entry) val = valueText(kind, r.entry);
+    } else if (r && !r.ok) rank = '取得できませんでした';
+    return '<div class="rk-me" id="rk-me"><span class="tiny dim">あなた</span><b class="rk-me-name">' + esc(me ? me.name : '') + '</b>' +
+      '<b class="rk-me-rank num" id="rk-me-rank">' + esc(rank) + '</b><span class="rk-me-val num">' + esc(val) + '</span></div>';
+  }
+  function joinedHtml() {
+    var kind = tab();
+    return '<div class="tabs" id="rk-tabs">' + TABS.map(function (t) {
+      return '<button class="' + (t[0] === kind ? 'on' : '') + '" data-act="rankTab" data-id="' + t[0] + '">' + t[1] + '</button>';
+    }).join('') + '</div>' +
+      '<div class="tiny dim rk-rule">' + (kind === 'rush' ? 'ボスラッシュの最高撃破数の順。同じ数は同じ順位です。' : '通算の最高到達階層の順。同じ階層なら先に到達した人が上です。') + '</div>' +
+      '<div id="rk-body">' + listHtml(kind) + '</div>' +
+      '<div class="panel mt rk-foot"><div class="tiny dim">記録は、伸びたときに自動で送ります（60秒以上の間隔をあけます。電波のないときは次の機会に送ります）。</div>' +
+      '<div class="btn-group mt"><button class="btn ghost sm" data-act="openReport">不適切な名前の報告・お問い合わせ</button>' +
+      '<button class="btn danger sm" id="rk-leave" data-act="rankLeave"' + (V.leaving ? ' disabled' : '') + '>ランキングから削除</button></div></div>' +
+      meHtml(kind);
+  }
+
+  // 開いたとき・タブを切り替えたときに、必要な分だけ取得する（キャッシュがあれば通信しない）
+  function load(kind, force) {
+    if (!K.joined() || V.loading[kind]) return;
+    V.loading[kind] = true;
+    var done = 0;
+    function fin() { if (++done === 2) { V.loading[kind] = false; if (UI.current === 'ranking') UI.refresh(); } }
+    K.top(kind, { force: !!force }).then(function (r) { V.error[kind] = r.ok ? null : r.message; fin(); });
+    K.myRank(kind, { force: !!force }).then(function () { fin(); });
+  }
+
+  UI.register({
+    id: 'ranking', name: 'ランキング', icon: UI.RANKING_ICON, nav: 'more',
+    onShow: function () { V.joinError = null; if (K.joined()) load(tab(), false); },
+    render: function (el) {
+      var joined = K.joined();
+      var a = document.activeElement;
+      if (a && a.id === 'rk-name') V.name = a.value;
+      el.innerHTML = '<div class="screen-title">ランキング</div>' + (joined ? joinedHtml() : joinHtml());
+      var inp = el.querySelector('#rk-name');
+      if (inp) { inp.value = V.name; count(inp); inp.addEventListener('input', function () { V.name = inp.value; V.joinError = null; var er = el.querySelector('#rk-name-err'); if (er) er.textContent = ''; count(inp); }); }
+    }
+  });
+  function count(inp) {
+    var c = UI.$('#rk-name-count'); if (!c) return;
+    var n = K.nameLength(K.cleanName(inp.value));
+    c.textContent = n + ' / ' + K.LIMITS.nameMax; c.classList.toggle('bad', n > K.LIMITS.nameMax);
+  }
+
+  UI.action('rankTab', function (el) { ui.rankTab = el.dataset.id === 'rush' ? 'rush' : 'floor'; load(tab(), false); UI.render(); });
+  UI.action('rankReload', function () {
+    var kind = tab(), c = K.cache[kind];
+    // 1分以内の再取得は通信しない（無料枠の読み取り回数を抑える）
+    if (c && Date.now() - c.at < 60000) { UI.toast('最新の表示です（1分ごとに更新できます）'); return; }
+    load(kind, true); UI.render();
+  });
+  UI.action('rankJoin', function () {
+    if (V.joining) return;
+    var inp = UI.$('#rk-name'); if (inp) V.name = inp.value;
+    var chk = K.validateName(V.name);
+    if (!chk.ok) { V.joinError = chk.error; UI.render(); return; }
+    var ng = K.ngCheck(chk.name);
+    if (ng) { V.joinError = ng; UI.render(); return; }
+    V.joining = true; V.joinError = null; UI.render();
+    K.join(chk.name, UI.st()).then(function (r) {
+      V.joining = false;
+      if (r.ok) { V.name = ''; UI.toast('ランキングに参加しました', 'good'); load(tab(), true); }
+      else V.joinError = r.message;
+      if (UI.current === 'ranking') UI.render();
+    });
+  });
+  UI.action('rankLeave', function () {
+    if (V.leaving) return;
+    UI.confirm({
+      title: 'ランキングから削除', danger: true, ok: '削除する',
+      html: '<div>ランキングからあなたの記録と表示名を削除し、この端末の参加情報も消します。<b>ゲームのセーブデータは消えません。</b></div><div class="tiny dim mt-s">もう一度参加すると、新しい記録として登録されます。</div>',
+      onOk: function () {
+        V.leaving = true; UI.render();
+        K.leave().then(function (r) {
+          V.leaving = false;
+          if (r.ok) { V.error = {}; UI.toast(r.hiddenKept ? '参加情報を消しました（非表示の記録は運営が削除します）' : 'ランキングから削除しました', 'good'); }
+          else UI.toast(r.message || '削除できませんでした', 'bad');
+          if (UI.current === 'ranking') UI.render();
+        });
+      }
+    });
+  });
+
+  // ---- 記録の自動送信（参加している場合だけ） ----
+  // 最高到達階層・転生・ボスラッシュの記録が変わったときに送る。60秒以内なら待ってからまとめて送る。電波がなければ戻ったときに送る。
+  var S = AL.RankingSync = { timer: null, pending: false };
+  S.kick = function () {
+    if (!K.joined()) return;
+    S.pending = true;
+    if (S.timer || K.busy) return;
+    var st = AL.Game && AL.Game.state;
+    if (!st) return;
+    K.submit(st).then(function (r) {
+      if (r.ok) { S.pending = false; return; }
+      if (r.kind === 'cooldown') { S.later(r.wait + 500); return; }
+      if (r.kind === 'busy') { S.later(3000); return; }
+      if (r.code === 'offline' || r.kind === 'network') { S.later(60000); return; }   // 次の機会（online の合図か1分後）に送る
+      if (r.removed) { K.clearOnline(); if (UI.current === 'ranking') UI.render(); return; }   // 運営が記録を消した：参加前の状態に戻す
+      S.pending = false;   // 拒否など：次に記録が変わったときにもう一度
+    });
+  };
+  S.later = function (ms) {
+    if (S.timer) return;
+    S.timer = setTimeout(function () { S.timer = null; if (S.pending) S.kick(); }, Math.max(1000, ms));
+  };
+  var lastFloor = null;
+  AL.Events.on('floor', function () {
+    var st = AL.Game && AL.Game.state; if (!st) return;
+    if (lastFloor === st.stats.maxFloorEver) return;   // 最高到達階層が伸びたときだけ
+    lastFloor = st.stats.maxFloorEver; S.kick();
+  });
+  AL.Events.on('rebirth', function () { S.kick(); });
+  AL.Events.on('dungeonEnd', function (res) { if (res && res.bossCount != null) S.kick(); });
+  AL.Events.on('stateReplaced', function () { lastFloor = null; S.kick(); });
+  if (G.addEventListener) G.addEventListener('online', function () { if (S.pending) { clearTimeout(S.timer); S.timer = null; S.kick(); } });
+  // 起動したら一度だけ、オフライン中に伸びた記録を送る（参加していなければ何もしない）
+  S.start = function () { setTimeout(function () { S.kick(); }, 5000); };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
 <script>/* js/ui/quests.js */
 /* ABYSSAL LEGENDS - クエスト画面と、バトル画面の「次の目標」 */
 (function (G) {
@@ -8005,6 +8251,7 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     UI.titleOpen = false;
     AL.Game.paused = false;
     AL.Game.lastReal = Date.now();
+    if (AL.RankingSync) AL.RankingSync.start();   // ランキングに参加していれば、オフライン中に伸びた記録を送る（参加していなければ何もしない）
     UI.settlePower();   // 開始直後の自動レベルアップによる総戦力の変化は、増減として出さない
     UI.renderNav();
     if (!AL.Guide.unlocked(UI.st(), UI.current)) UI.show('battle');

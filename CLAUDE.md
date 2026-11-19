@@ -107,7 +107,7 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
 
 ## ランキングのルール
 
-- オンラインのランキング（v1。1.10.2 で通信の仕組み、画面は次の PR）。通信は `AL.Ranking`（`js/core/ranking.js`）。Firebase の匿名認証（Identity Toolkit）と Firestore を
+- オンラインのランキング（v1。1.10.2 で通信の仕組み、1.11.0 で画面）。通信は `AL.Ranking`（`js/core/ranking.js`）、画面と自動送信は `js/ui/ranking.js`（「その他」の「ランキング」タイル。PC では上部メニュー）。Firebase の匿名認証（Identity Toolkit）と Firestore を
   REST（fetch）で直接呼ぶ。**Firebase SDK は読み込まない**（外部スクリプトを増やさない）。サーバー側の検証は `firebase/firestore.rules` だけで行う（無料の Spark プランで Cloud Functions は使わない）。
   **ゲームの状態（`AL.Game.state`）・セーブ・戦闘・乱数（`U.rng`）には触れない。** 送信時に渡された state から値を読むだけ（`tests/ranking.test.mjs` がソースの参照を確認する）。
   セーブへの影響は A（セーブの項目・保存キー・`SAVE_VERSION` は変えない）。
@@ -122,6 +122,12 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
 - ルールの上限（表示名 1〜12 文字・階層 1〜100000・ボスラッシュ 0〜10000・転生回数 0〜100000・送信間隔 60 秒・伸び幅）は `AL.Ranking.LIMITS`・`AL.CONFIG.RANKING.COOLDOWN_SEC` と同じ値にする
   （`tests/ranking.test.mjs` が一致を確認する）。伸び幅の根拠はルールのコメントに書く。ルールを変えるときは `tests/ranking-rules.emu.mjs` も合わせて確認する。
 - 表示名の文字数は Firestore のルール（`string.size()`）と同じく UTF-16 の単位で数える（絵文字は2文字）。HTML などで使う記号（山かっこ・アンパサンド・引用符・バッククォート・バックスラッシュ）は使えない。表示するときも `esc()` を通す。
+- 画面：未参加なら送信する項目の説明と表示名の入力・「参加する」。参加後は「階層」「ボスラッシュ」のタブ、上位100件（5分キャッシュ。「更新」は1分に1回まで）、自分の順位を下に固定、
+  転生回数は名前の横に表示するだけ、「ランキングから削除」（確認つき。セーブは消さない）、報告フォームへの導線。表示名の変更機能はない（削除して参加し直す）。
+- 表示名の NG ワード（`AL.Ranking.NG_WORDS`・`ngCheck`）は、全角半角・大文字小文字・カタカナ/ひらがな・間の空白や記号の違いを無視して含まれているかで判定する簡易フィルター。運営・公式のなりすましも断る。
+  残ったものは管理者が Firestore のコンソールで `hidden` を立てる（手順は Firebase 準備手順書）。
+- 自動送信（`AL.RankingSync`）：参加している場合だけ、最高到達階層が伸びたとき・転生・ボスラッシュの終了・セーブの取り込み・起動時に送る。60秒以内なら待ってまとめて送り、通信できなければ後で送る。
+  運営が記録を消していたら、この端末の参加情報を消して参加前に戻す。
 - `firebase/`（ルール・インデックス・エミュレーターの設定）は `_config.yml` の `exclude` に入れ、公開しない。
 
 ## テスト
@@ -163,7 +169,9 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
   例外時の退避・実際の戦闘での動作は `tests/smoke.mjs`（「戦闘演出（pixelfx）」）で確認する。見た目は `test-results/phone-fx-*.png` を目で確認する。
 - `tests/ranking.test.mjs`：ランキングの通信（偽の Firebase）。未設定・未参加では通信しないこと、表示名の検証、送る項目（7つ）とサーバー時刻、別キーへの保存、送信間隔・変化なし・値を下げないこと、
   オフライン、トークンの取り直し、失敗の区別、取得のキャッシュと順位、自分の順位、削除、セーブ・書き出しへの影響がないこと、ルールとの上限の一致を確認する。
-  画面からの操作とセーブの不変は `tests/smoke.mjs` の「ランキング（偽の Firebase）」で確認する（`googleapis.com` への通信はすべて偽の応答で受ける）。
+  NG ワードの判定、自分の順位のキャッシュも確認する。
+  画面（タイルの位置・参加前に通信しないこと・送信項目の表示・入力チェック・一覧と自分の順位・タブ・名前を HTML として解釈しないこと・自動送信と間隔・削除・未設定時に出さないこと・通信失敗時）とセーブの不変は
+  `tests/smoke.mjs` の「ランキング」で確認する（`googleapis.com` への通信はすべて偽の Firebase で受ける）。見た目は `test-results/phone-ranking-*.png` を目で確認する。
 - `npm run test:rules`（`tests/ranking-rules.emu.mjs`）：Firebase エミュレーター（認証・Firestore。`firebase-tools`、Java 21 以上が必要）の上で、`AL.Ranking` の参加〜削除と、ルールの6項目
   （本人だけ・範囲・増える方向だけ・60秒・伸び幅・hidden）を確認する。プロジェクト ID は `demo-` で始まるエミュレーター専用の値で、本物の Firebase には接続しない。GitHub Actions の `test` でも実行する。
 - `tests/save-recovery.test.mjs`：架空の localStorage（テストごとに新しく作り、書き込み失敗などを仕込める）で、
