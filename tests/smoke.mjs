@@ -719,8 +719,8 @@ test('新規プレイヤー：タイトル → 初回召喚 → はじめての�
     assert.equal(await titleNotice(page), null, '正常な起動でお知らせが表示されています');
     let g = await guideInfo(page);
     assert.equal(g.paused, true);
-    // サポート（報告フォーム。1.10.1 から PC の上部メニューにも並ぶ）は、設定と同じく導入前から使える
-    assert.deepEqual(g.nav, ['battle', 'menu', 'settings', 'support'], '導入前から使える機能が多すぎます');
+    // サポート（報告フォーム。1.10.1 から PC の上部メニューにも並ぶ）とランキング（1.11.0。参加は任意で、押すまで通信しない）は、設定と同じく導入前から使える
+    assert.deepEqual(g.nav, ['battle', 'menu', 'settings', 'ranking', 'support'], '導入前から使える機能が多すぎます');
     await page.screenshot({ path: `${SHOTS}/phone-guide-title.png` });
 
     await page.click('[data-title="new"]');
@@ -1835,7 +1835,9 @@ test('その他画面：サポートは設定の隣のタイル（3列のまま�
       // 最終行は「設定・サポート」：同じ行に並び、ほかのタイルと同じ大きさ・同じデザイン
       assert.equal(r.boxes[iP].t, r.boxes[iS].t, `${where}：設定とサポートが同じ行にありません`);
       assert.ok(r.boxes[iP].l > r.boxes[iS].l, `${where}：サポートが設定の右にありません`);
-      assert.ok(r.boxes.slice(0, iS).every((b) => b.t < r.boxes[iS].t), `${where}：設定・サポートが最終行ではありません`);
+      // 1.11.0 でランキングのタイルが加わり9枚（3列×3行）になったため、最終行は「ランキング・設定・サポート」。設定・サポートより後ろ・下にタイルがないことを確かめる
+      assert.ok(r.boxes.slice(0, iS).every((b) => b.t <= r.boxes[iS].t), `${where}：設定・サポートが最終行ではありません`);
+      assert.equal(r.ids[iS - 1], 'ranking', `${where}：ランキングが設定の前にありません`);
       assert.ok(r.boxes.every((b) => b.w === r.boxes[0].w && b.h === r.boxes[0].h), `${where}：タイルの大きさがそろっていません ${JSON.stringify(r.boxes)}`);
       assert.equal(r.cls[iP], 'menu-tile', `${where}：サポートのタイルが既存のタイルと違うデザインです`);
       assert.equal(r.icon, '問');
