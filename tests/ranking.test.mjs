@@ -285,3 +285,35 @@ test('ルールとゲームの上限が一致し、ランキングのコード�
   }
   assert.equal(/firebase(app|js)?\.(com|google)|gstatic\.com|<script src/i.test(m[1]), false, 'Firebase SDK を読み込まない');
 });
+
+test('NG ワード：全角半角・大文字小文字・カタカナ/ひらがな・間の空白や記号の違いを無視して断り、ふつうの名前は通す。参加時にも確かめる', async () => {
+  const { K, AL } = game();
+  for (const bad of ['しね', 'シネ', 'ｼﾈ', 'し ね', 'し・ね', 'FUCK', 'ｆｕｃｋ', 'f-u-c-k', '運営', 'うんえい', 'ウンエイ公式', 'Admin', 'GM', 'ｇｍ', 'おっぱい星人', 'ChinkoMan'.replace('Chinko', 'ちんこ')]) {
+    assert.ok(K.ngCheck(bad), bad);
+  }
+  for (const ok of ['りく', '深淵の探索者', 'Abyss Walker', 'gm太郎', 'シネマ好き'.replace('シネマ', 'シアター'), '黒騎士ガルヴァン', 'ノクティア推し', '123']) {
+    assert.equal(K.ngCheck(ok), null, ok);
+  }
+  configure(AL);
+  const f = fakeFirebase();
+  const r = await K.join('ウンエイ', stateWith(1), { fetch: f.fetch });
+  assert.equal(r.code, 'ng'); assert.equal(f.calls.length, 0, 'NG なら通信しない');
+});
+
+test('自分の順位は数分キャッシュし、自分の記録を送ったら取り直す（上位の一覧はキャッシュの期限まで使い回す）', async () => {
+  const { K, AL } = game(); configure(AL);
+  const f = fakeFirebase();
+  await K.join('りく', stateWith(42), { fetch: f.fetch, now: 1000 });
+  await K.top('floor', { fetch: f.fetch, now: 1000 });
+  const count = () => f.calls.filter((c) => c.url.endsWith(':runAggregationQuery')).length;
+  await K.myRank('floor', { fetch: f.fetch, now: 2000 });
+  const n = count();
+  await K.myRank('floor', { fetch: f.fetch, now: 3000 });
+  assert.equal(count(), n, 'キャッシュを使う');
+  await K.submit(stateWith(50), { fetch: f.fetch, now: 70000 });
+  await K.myRank('floor', { fetch: f.fetch, now: 70001 });
+  assert.ok(count() > n, '送ったあとは取り直す');
+  const q = f.calls.filter((c) => c.url.endsWith(':runQuery')).length;
+  assert.equal((await K.top('floor', { fetch: f.fetch, now: 70002 })).cached, true);
+  assert.equal(f.calls.filter((c) => c.url.endsWith(':runQuery')).length, q);
+});

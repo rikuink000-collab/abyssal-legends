@@ -719,8 +719,8 @@ test('新規プレイヤー：タイトル → 初回召喚 → はじめての�
     assert.equal(await titleNotice(page), null, '正常な起動でお知らせが表示されています');
     let g = await guideInfo(page);
     assert.equal(g.paused, true);
-    // サポート（報告フォーム。1.10.1 から PC の上部メニューにも並ぶ）は、設定と同じく導入前から使える
-    assert.deepEqual(g.nav, ['battle', 'menu', 'settings', 'support'], '導入前から使える機能が多すぎます');
+    // サポート（報告フォーム。1.10.1 から PC の上部メニューにも並ぶ）とランキング（1.11.0。参加は任意で、押すまで通信しない）は、設定と同じく導入前から使える
+    assert.deepEqual(g.nav, ['battle', 'menu', 'settings', 'ranking', 'support'], '導入前から使える機能が多すぎます');
     await page.screenshot({ path: `${SHOTS}/phone-guide-title.png` });
 
     await page.click('[data-title="new"]');
@@ -1835,7 +1835,9 @@ test('その他画面：サポートは設定の隣のタイル（3列のまま�
       // 最終行は「設定・サポート」：同じ行に並び、ほかのタイルと同じ大きさ・同じデザイン
       assert.equal(r.boxes[iP].t, r.boxes[iS].t, `${where}：設定とサポートが同じ行にありません`);
       assert.ok(r.boxes[iP].l > r.boxes[iS].l, `${where}：サポートが設定の右にありません`);
-      assert.ok(r.boxes.slice(0, iS).every((b) => b.t < r.boxes[iS].t), `${where}：設定・サポートが最終行ではありません`);
+      // 1.11.0 でランキングのタイルが加わり9枚（3列×3行）になったため、最終行は「ランキング・設定・サポート」。設定・サポートより後ろ・下にタイルがないことを確かめる
+      assert.ok(r.boxes.slice(0, iS).every((b) => b.t <= r.boxes[iS].t), `${where}：設定・サポートが最終行ではありません`);
+      assert.equal(r.ids[iS - 1], 'ranking', `${where}：ランキングが設定の前にありません`);
       assert.ok(r.boxes.every((b) => b.w === r.boxes[0].w && b.h === r.boxes[0].h), `${where}：タイルの大きさがそろっていません ${JSON.stringify(r.boxes)}`);
       assert.equal(r.cls[iP], 'menu-tile', `${where}：サポートのタイルが既存のタイルと違うデザインです`);
       assert.equal(r.icon, '問');
@@ -2638,6 +2640,259 @@ test('ランキング（偽の Firebase）：参加するまで通信せず、�
     assert.ok(seen.every((c) => /^https:\/\/(identitytoolkit|securetoken|firestore)\.googleapis\.com\//.test(c.url)), '想定外の送信先');
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
+});
+
+// ---------- ランキング画面（1.11.0）：偽の Firebase（本物には接続しない） ----------
+// googleapis.com への通信をすべて受け、記録をメモリに持つ偽の Firebase。calls に通信を記録する
+async function fakeFirebaseRoute(context, init = []) {
+  const docs = new Map(init.map((d, i) => [d.uid, { name: d.name, floor: d.floor, rush: d.rush || 0, rebirths: d.rebirths || 0, hidden: !!d.hidden, floorAt: d.floorAt || `2026-11-01T00:00:${String(i).padStart(2, '0')}Z` }]));
+  const calls = [];
+  let seq = 0;
+  const fields = (d) => ({ name: { stringValue: d.name }, floor: { integerValue: String(d.floor) }, rush: { integerValue: String(d.rush) }, rebirths: { integerValue: String(d.rebirths) },
+    hidden: { booleanValue: d.hidden }, floorAt: { timestampValue: d.floorAt }, updatedAt: { timestampValue: d.floorAt } });
+  const docOf = (uid) => ({ name: `projects/abyssal-legends/databases/(default)/documents/leaderboard/${uid}`, fields: fields(docs.get(uid)) });
+  await context.route(/googleapis\.com/, async (route) => {
+    const r = route.request(), url = r.url(), method = r.method();
+    const body = r.postData() && /json/.test(r.headers()['content-type'] || '') ? JSON.parse(r.postData()) : r.postData();
+    calls.push({ method, url, body });
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' };
+    const json = (o, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: cors, body: JSON.stringify(o) });
+    if (method === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    if (url.includes('accounts:signUp')) { seq++; return json({ idToken: 'id-' + seq, refreshToken: 'rt-' + seq, localId: 'me' + seq, expiresIn: '3600' }); }
+    if (url.includes('securetoken')) return json({ id_token: 'id-x', refresh_token: 'rt-x', user_id: 'me' + seq, expires_in: '3600' });
+    if (url.includes('accounts:delete')) return json({});
+    if (url.endsWith(':commit')) {
+      const w = body.writes[0], uid = w.update.name.split('/').pop(), f = w.update.fields, t = new Date(Date.now()).toISOString();
+      const prev = docs.get(uid) || { hidden: false };
+      const val = (k) => (f[k] ? (f[k].stringValue ?? Number(f[k].integerValue ?? 0)) : prev[k]);
+      docs.set(uid, { name: val('name'), floor: val('floor'), rush: val('rush'), rebirths: val('rebirths'), hidden: prev.hidden,
+        floorAt: w.updateTransforms.some((x) => x.fieldPath === 'floorAt') ? t : prev.floorAt });
+      return json({ commitTime: t });
+    }
+    const list = () => [...docs.keys()].map((uid) => ({ uid, ...docs.get(uid) }));
+    if (url.endsWith(':runQuery')) {
+      const q = body.structuredQuery, rush = q.orderBy[0].field.fieldPath === 'rush';
+      const rows = list().filter((d) => !rush || d.rush > 0).sort((a, b) => (rush ? b.rush - a.rush : b.floor - a.floor || a.floorAt.localeCompare(b.floorAt))).slice(0, q.limit);
+      return json(rows.map((d) => ({ document: docOf(d.uid) })));
+    }
+    if (url.endsWith(':runAggregationQuery')) {
+      const w = body.structuredAggregationQuery.structuredQuery.where;
+      const fs = w.compositeFilter ? w.compositeFilter.filters : [w];
+      const n = list().filter((d) => fs.every(({ fieldFilter: x }) => {
+        const v = x.field.fieldPath === 'floorAt' ? d.floorAt : d[x.field.fieldPath], c = x.value.integerValue != null ? Number(x.value.integerValue) : x.value.timestampValue;
+        return x.op === 'GREATER_THAN' ? v > c : x.op === 'LESS_THAN' ? v < c : v === c;
+      })).length;
+      return json([{ result: { aggregateFields: { n: { integerValue: String(n) } } } }]);
+    }
+    const m = url.match(/leaderboard\/([^?/]+)$/);
+    if (m && method === 'GET') return docs.has(m[1]) ? json(docOf(m[1])) : json({ error: { status: 'NOT_FOUND' } }, 404);
+    if (m && method === 'DELETE') { docs.delete(m[1]); return json({}); }
+    return json({ error: { status: 'NOT_FOUND' } }, 404);
+  });
+  return { calls, docs };
+}
+const OTHERS = [
+  { uid: 'a1', name: '深淵の覇者', floor: 520, rush: 30, rebirths: 12 },
+  { uid: 'a2', name: '<img src=x onerror="window.__xss=1">', floor: 300, rush: 12, rebirths: 3 },
+  { uid: 'a3', name: 'ながいなまえのぼうけんしゃ', floor: 300, rush: 12, rebirths: 0 },
+  { uid: 'a4', name: '隠された名前', floor: 999, rush: 99, rebirths: 1, hidden: true }
+];
+const rankSnap = (page) => page.evaluate(([a, b]) => ({ main: localStorage.getItem(a), backup: localStorage.getItem(b) }), [SAVE_KEY, BACKUP_KEY]);
+async function openRanking(page, fb) {
+  await boot(page);
+  await startAsVeteran(page);
+  await page.evaluate(() => { AL.Game.paused = true; AL.Game.save(); AL.UI.show('menu'); });
+  await page.tap('.menu-tile[data-id="ranking"]');
+  await page.waitForSelector('.screen-title:has-text("ランキング")');
+}
+
+test('ランキング：その他のタイル（3列・設定とサポートは最終行のまま）から開け、参加するまで通信しない。送信項目を明記する（360px・390px）', async () => {
+  for (const width of [360, 390]) {
+    const { context, page, errors } = await openPhone();
+    try {
+      await page.setViewportSize({ width, height: 844 });
+      const fb = await fakeFirebaseRoute(context, OTHERS);
+      await boot(page);
+      await startAsVeteran(page);
+      await page.evaluate(() => { AL.Game.state.settings.speed = 4; });
+      await page.waitForTimeout(1500);   // 戦闘が進んでも、参加していなければ送らない
+      await page.evaluate(() => { AL.Game.paused = true; AL.Game.save(); AL.UI.show('menu'); });
+      const ids = await page.$$eval('.menu-grid > .menu-tile', (ts) => ts.map((t) => t.dataset.id || t.id));
+      assert.deepEqual(ids.slice(-3), ['ranking', 'settings', 'open-report'], `${width}px：タイルの並び ${ids}`);
+      assert.equal(await page.locator('.menu-tile[data-id="ranking"] .ni').innerText(), '順');
+      const before = await rankSnap(page);
+      await page.tap('.menu-tile[data-id="ranking"]');
+      const txt = await page.locator('#screen').innerText();
+      for (const t of ['表示名', '通算の最高到達階層', 'ボスラッシュ最高撃破数', '転生回数', '到達・更新の時刻', '「参加する」を押すまで、何も送信しません', 'セーブデータ・所持品は送りません']) assert.ok(txt.includes(t), `${width}px：「${t}」がありません`);
+      assert.ok(await page.locator('#rk-join').isVisible());
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${width}px：横にはみ出しています`);
+      await page.screenshot({ path: `${SHOTS}/phone-ranking-join-${width}.png`, fullPage: true });
+      assert.deepEqual(fb.calls, [], `${width}px：参加する前に通信しました`);
+      assert.deepEqual(await rankSnap(page), before, '画面を開くだけでセーブが変わりました');
+      assert.equal(await page.evaluate(() => localStorage.getItem('abyssal_legends_online')), null);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
+test('ランキング：表示名の入力チェック（空・13文字・NGワード・記号）は通信せずに画面で知らせる', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    const fb = await fakeFirebaseRoute(context, OTHERS);
+    await openRanking(page, fb);
+    const tryName = async (v) => { await page.fill('#rk-name', v); await page.tap('#rk-join'); return page.locator('#rk-name-err').innerText(); };
+    assert.match(await tryName(''), /入力してください/);
+    assert.match(await tryName('あ'.repeat(13)), /12文字以内/);
+    assert.match(await tryName('ｳﾝｴｲ 公式'), /使えません/, '運営のなりすまし（半角カナ・空白を挟んでも）');
+    assert.match(await tryName('し・ね'), /使えません/, '記号を挟んでも');
+    assert.match(await tryName('a<b>'), /記号/);
+    assert.equal(await page.locator('#rk-name-count').innerText(), '4 / 12');
+    assert.deepEqual(fb.calls, [], '入力チェックで断るときは通信しない');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('ランキング：参加 → 上位の一覧（非表示を除く・自分を強調・名前は HTML として解釈しない）→ 自分の順位を下に固定 → タブ切替。セーブは変わらない', async () => {
+  for (const width of [360, 390]) {
+    const { context, page, errors } = await openPhone();
+    try {
+      await page.setViewportSize({ width, height: 844 });
+      const fb = await fakeFirebaseRoute(context, OTHERS);
+      await openRanking(page, fb);
+      const floor = await page.evaluate(() => { AL.Game.state.stats.maxFloorEver = 300; AL.Game.state.stats.rushBest = 12; AL.Game.state.rebirth.count = 2; AL.Game.save(); return 300; });
+      const before = await rankSnap(page);
+      await page.fill('#rk-name', '  りく　の 冒険 ');
+      await page.tap('#rk-join');
+      await page.waitForSelector('#rk-list');
+      await page.waitForFunction(() => /位/.test(document.querySelector('#rk-me-rank')?.textContent || ''));
+      const rows = await page.$$eval('#rk-list .rk-row', (rs) => rs.map((r) => ({ rank: r.querySelector('.rk-rank').textContent, name: r.querySelector('.rk-name').firstChild.textContent, val: r.querySelector('.rk-val').textContent, me: r.classList.contains('me'), rb: r.querySelector('.rk-rb').textContent })));
+      assert.deepEqual(rows.map((r) => r.name), ['深淵の覇者', '<img src=x onerror="window.__xss=1">', 'ながいなまえのぼうけんしゃ', 'りく の 冒険'], `${width}px：並び（同じ階層は先着順・非表示は出ない）`);
+      assert.deepEqual(rows.map((r) => r.rank), ['1', '2', '3', '4']);
+      assert.equal(rows[3].me, true); assert.equal(rows[3].val, '第300層'); assert.equal(rows[0].rb, '転生12');
+      assert.equal(await page.evaluate(() => window.__xss), undefined, '名前が HTML として解釈されました');
+      assert.equal(await page.locator('#rk-list img').count(), 0);
+      assert.equal(await page.locator('#rk-me-rank').innerText(), '4位');
+      // 自分の順位は画面の下に固定（下部ナビの上）
+      const me = await page.evaluate(() => { const r = document.querySelector('#rk-me').getBoundingClientRect(), n = document.querySelector('#nav').getBoundingClientRect(); return { bottom: r.bottom, navTop: n.top, pos: getComputedStyle(document.querySelector('#rk-me')).position }; });
+      assert.equal(me.pos, 'sticky'); assert.ok(me.bottom <= me.navTop + 1, `${width}px：自分の順位が下部ナビに隠れています`);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${width}px：横にはみ出しています`);
+      await page.screenshot({ path: `${SHOTS}/phone-ranking-floor-${width}.png` });
+      // 送った内容：7項目・現在の記録
+      const commit = fb.calls.find((c) => c.url.endsWith(':commit')).body.writes[0];
+      assert.deepEqual(Object.keys(commit.update.fields).sort(), ['floor', 'hidden', 'name', 'rebirths', 'rush']);
+      assert.equal(commit.update.fields.floor.integerValue, String(floor));
+      // ボスラッシュのタブ：同数は同順位
+      await page.tap('#rk-tabs button[data-id="rush"]');
+      await page.waitForFunction(() => document.querySelectorAll('#rk-list .rk-row').length === 4 && /位/.test(document.querySelector('#rk-me-rank')?.textContent || ''));
+      const rush = await page.$$eval('#rk-list .rk-row', (rs) => rs.map((r) => r.querySelector('.rk-rank').textContent + ':' + r.querySelector('.rk-val').textContent));
+      assert.deepEqual(rush, ['1:30体', '2:12体', '2:12体', '2:12体']);
+      assert.equal(await page.locator('#rk-me-rank').innerText(), '2位');
+      await page.screenshot({ path: `${SHOTS}/phone-ranking-rush-${width}.png` });
+      // 開き直しても、キャッシュの間は一覧を取り直さない
+      const n = fb.calls.filter((c) => c.url.endsWith(':runQuery')).length;
+      await page.evaluate(() => { AL.UI.show('menu'); AL.UI.show('ranking'); });
+      await page.waitForTimeout(300);
+      assert.equal(fb.calls.filter((c) => c.url.endsWith(':runQuery')).length, n, '開き直すたびに一覧を取り直しています');
+      const after = await rankSnap(page);
+      assert.deepEqual(after, before, '参加・表示でセーブが変わりました');
+      assert.equal(/rt-1|me1|refreshToken/.test(after.main), false, 'セーブにオンライン情報が入っています');
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
+test('ランキング：参加後は、最高到達階層・転生・ボスラッシュの記録更新で自動送信し、間隔（60秒）を守ってまとめて送る', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    const fb = await fakeFirebaseRoute(context, OTHERS);
+    await openRanking(page, fb);
+    await page.fill('#rk-name', 'りく');
+    await page.tap('#rk-join');
+    await page.waitForSelector('#rk-list');
+    const commits = () => fb.calls.filter((c) => c.url.endsWith(':commit')).map((c) => c.body.writes[0]);
+    assert.equal(commits().length, 1);
+    // 60秒以内の更新は、待ってからまとめて送る（テストでは間隔を2秒にする）
+    await page.evaluate(() => { AL.CONFIG.RANKING.COOLDOWN_SEC = 2; const st = AL.Game.state; st.stats.maxFloorEver += 5; AL.Events.emit('floor', { cleared: 1, floor: 1 }); st.stats.maxFloorEver += 3; AL.Events.emit('floor', { cleared: 1, floor: 1 }); });
+    await page.waitForTimeout(800);
+    assert.equal(commits().length, 1, '間隔の前に送りました');
+    await page.waitForFunction(() => true);
+    await page.waitForTimeout(2500);
+    assert.equal(commits().length, 2, 'まとめて1回だけ送る');
+    const w = commits()[1];
+    assert.deepEqual(w.updateMask.fieldPaths, ['floor']);
+    assert.equal(Number(w.update.fields.floor.integerValue), await page.evaluate(() => AL.Game.state.stats.maxFloorEver));
+    // 階層が伸びないイベント（周回）では送らない
+    await page.waitForTimeout(2200);
+    await page.evaluate(() => AL.Events.emit('floor', { cleared: 1, floor: 1 }));
+    await page.waitForTimeout(500);
+    assert.equal(commits().length, 2);
+    // 転生・ボスラッシュの記録
+    await page.evaluate(() => { AL.Game.state.rebirth.count += 1; AL.Events.emit('rebirth', { pts: 1, count: AL.Game.state.rebirth.count }); });
+    await page.waitForFunction(() => true); await page.waitForTimeout(500);
+    assert.equal(commits().length, 3); assert.deepEqual(commits()[2].updateMask.fieldPaths, ['rebirths']);
+    await page.waitForTimeout(2200);
+    await page.evaluate(() => { AL.Game.state.stats.rushBest = 40; AL.Events.emit('dungeonEnd', { bossCount: 40, items: [] }); });
+    await page.waitForTimeout(500);
+    assert.equal(commits().length, 4); assert.deepEqual(commits()[3].updateMask.fieldPaths, ['rush']);
+    assert.deepEqual(errors.filter((e) => !/Failed to load resource/.test(e)), []);
+  } finally { await context.close(); }
+});
+
+test('ランキング：「ランキングから削除」は確認のうえ、記録と参加情報を消し、セーブは消さない。参加前の画面に戻る', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    const fb = await fakeFirebaseRoute(context, OTHERS);
+    await openRanking(page, fb);
+    await page.fill('#rk-name', 'りく');
+    await page.tap('#rk-join');
+    await page.waitForSelector('#rk-list');
+    const before = await rankSnap(page);
+    await page.tap('#rk-leave');
+    await page.tap('.modal [data-mbtn="0"]');   // キャンセルでは何もしない
+    assert.ok(await page.evaluate(() => localStorage.getItem('abyssal_legends_online')));
+    await page.tap('#rk-leave');
+    assert.match(await page.locator('.modal').innerText(), /セーブデータは消えません/);
+    await page.tap('.modal [data-mbtn="1"]');
+    await page.waitForSelector('#rk-join');
+    assert.equal(await page.evaluate(() => localStorage.getItem('abyssal_legends_online')), null);
+    assert.equal(fb.docs.has('me1'), false, '記録が消えていません');
+    assert.ok(fb.calls.some((c) => c.url.includes('accounts:delete')));
+    assert.deepEqual(await rankSnap(page), before, '削除でセーブが変わりました');
+    // お問い合わせ（報告フォーム）へ辿れる
+    await page.fill('#rk-name', 'りく'); await page.tap('#rk-join'); await page.waitForSelector('#rk-list');
+    await page.tap('.rk-foot [data-act="openReport"]');
+    await page.waitForSelector('.backdrop .rf');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('ランキング：接続先が未設定なら、タイルも画面も出さない（その他は8タイルのまま）。通信の失敗は表示して戦闘は止まらない', async () => {
+  const { context, page, errors } = await openPhone();
+  try {
+    await page.route(/\/index\.html$/, (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8',
+      body: HTML.toString('utf8').replace(/API_KEY: '[^']*'/, "API_KEY: ''").replace(/PROJECT_ID: '[^']*'/, "PROJECT_ID: ''") }));
+    await boot(page);
+    await startAsVeteran(page);
+    await page.evaluate(() => AL.UI.show('menu'));
+    assert.equal(await page.evaluate(() => AL.Ranking.configured()), false);
+    assert.equal(await page.locator('.menu-tile[data-id="ranking"]').count(), 0);
+    assert.equal(await page.locator('.menu-grid > .menu-tile').count(), 8);
+    assert.equal(await page.evaluate(() => !!AL.UI.screens.ranking), false);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+  const c2 = await openPhone();
+  try {
+    await c2.context.route(/googleapis\.com/, (route) => route.abort('failed'));
+    await openRanking(c2.page);
+    await c2.page.evaluate(() => { AL.Game.paused = false; });
+    await c2.page.fill('#rk-name', 'りく'); await c2.page.tap('#rk-join');
+    await c2.page.waitForFunction(() => /通信できません/.test(document.querySelector('#rk-name-err')?.textContent || ''));
+    assert.equal(await c2.page.evaluate(() => localStorage.getItem('abyssal_legends_online')), null, '失敗したら参加済みにしない');
+    const k0 = await c2.page.evaluate(() => AL.Game.state.stats.kills);
+    await c2.page.waitForTimeout(1500);
+    assert.notEqual(await c2.page.evaluate(() => AL.Game.state.stats.kills), k0, '通信の失敗で戦闘が止まりました');
+    assert.deepEqual(c2.errors.filter((e) => !/Failed to load resource|net::ERR/.test(e)), []);
+  } finally { await c2.context.close(); }
 });
 
 test('GitHub Pages の公開対象が index.html・README.md・og-image.png（共有時のリンクカード画像）だけである', () => {
