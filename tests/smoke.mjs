@@ -16,6 +16,7 @@ import { chromium, devices } from 'playwright';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const HTML = readFileSync(new URL('../index.html', import.meta.url));
+const NEWS_JSON = readFileSync(new URL('../news.json', import.meta.url));   // 公開サイトと同じく、ページと同じ場所の news.json を配信する
 const SHOTS = fileURLToPath(new URL('../test-results/', import.meta.url));
 
 // 変更してはいけない保存キー（CLAUDE.md 参照）
@@ -29,12 +30,15 @@ if (process.env.AL_SAVE_FILE) FIXTURES.push({ name: 'AL_SAVE_FILE', text: readFi
 let server, baseURL, browser;
 
 before(async () => {
-  // index.html と、localStorage を準備するための空ページだけを返す一時サーバー
+  // index.html・お知らせ（news.json）と、localStorage を準備するための空ページだけを返す一時サーバー
   server = createServer((req, res) => {
     const path = new URL(req.url, 'http://x').pathname;
     if (path === '/' || path === '/index.html') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
       res.end(HTML);
+    } else if (path === '/news.json') {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(NEWS_JSON);
     } else if (path === '/__blank') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end('<!doctype html><title>blank</title>');
@@ -720,7 +724,8 @@ test('新規プレイヤー：タイトル → 初回召喚 → はじめての�
     let g = await guideInfo(page);
     assert.equal(g.paused, true);
     // サポート（報告フォーム。1.10.1 から PC の上部メニューにも並ぶ）とランキング（1.11.0。参加は任意で、押すまで通信しない）は、設定と同じく導入前から使える
-    assert.deepEqual(g.nav, ['battle', 'menu', 'settings', 'ranking', 'support'], '導入前から使える機能が多すぎます');
+    // お知らせ（1.12.0）も導入中から読める（メンテナンスなどの案内を新規プレイヤーにも届けるため）。PC では「ガチャ」の右の位置（スマートフォンは「その他」画面から）
+    assert.deepEqual(g.nav, ['battle', 'news', 'menu', 'settings', 'ranking', 'support'], '導入前から使える機能が多すぎます');
     await page.screenshot({ path: `${SHOTS}/phone-guide-title.png` });
 
     await page.click('[data-title="new"]');
@@ -923,6 +928,9 @@ test('セーブを読み込めなかったとき：始める前にタイトル�
     assert.deepEqual(await titleButtons(page), { new: true, continue: false });
     const note = await titleNotice(page);
     assert.ok(note, 'タイトル画面にお知らせが表示されていません');
+    // 公式のお知らせ（1.12.0）と区別するため、題は「セーブデータについて」
+    assert.match(note, /^セーブデータについて/);
+    assert.ok(!/^お知らせ/.test(note), 'セーブの警告の題が「お知らせ」のままです');
     assert.match(note, /セーブデータが読み込めなかったため新しく開始しました（元データは別名で退避済み）/);
     assert.match(note, /JSONとして読み込めません/);
     const layout = await page.evaluate(() => {
@@ -939,7 +947,7 @@ test('セーブを読み込めなかったとき：始める前にタイトル�
     const after = await page.evaluate(() => ({ step: AL.Game.state.guide.step, modals: AL.UI.modals.map((m) => m.opts.title),
       corrupt: Object.keys(localStorage).filter((k) => k.includes('_corrupt_')).map((k) => localStorage.getItem(k)) }));
     assert.equal(after.step, 'summon');
-    assert.ok(!after.modals.includes('お知らせ'), 'タイトル画面と同じお知らせが、開始後にもう一度表示されました');
+    assert.ok(!after.modals.includes('セーブデータについて') && !after.modals.includes('お知らせ'), 'タイトル画面と同じお知らせが、開始後にもう一度表示されました');
     assert.deepEqual(after.corrupt, [BROKEN]);
 
     // 2) 本体が壊れていて、バックアップ（合成フィクスチャ）から復元 → CONTINUE で続きから。お知らせも表示
@@ -950,7 +958,7 @@ test('セーブを読み込めなかったとき：始める前にタイトル�
     assert.match(await titleNotice(page) || '', /バックアップから復元しました/);
     await page.click('[data-title="continue"]');
     const g = await page.evaluate(() => ({ legacy: AL.Game.state.guide.legacy, step: AL.Game.state.guide.step, title: !!document.getElementById('title-screen'),
-      notice: AL.UI.modals.some((m) => m.opts.title === 'お知らせ') }));
+      notice: AL.UI.modals.some((m) => m.opts.title === 'セーブデータについて' || m.opts.title === 'お知らせ') }));
     assert.deepEqual(g, { legacy: true, step: 'done', title: false, notice: false }, '開始後の状態が違うか、お知らせが2回表示されました');
 
     // 3) タイトル画面を表示したあとに加わったお知らせ（例：タイトル画面で待つ間に端末の時刻が戻った）は、開始後に1回だけ表示する
@@ -960,7 +968,7 @@ test('セーブを読み込めなかったとき：始める前にタイトル�
     const late = '（テスト用）タイトル画面の表示後に加わったお知らせ';
     await page.evaluate((w) => { AL.Game.loadWarnings.push(w); }, late);
     await page.click('[data-title="new"]');
-    const shown = await page.evaluate(() => AL.UI.modals.filter((m) => m.opts.title === 'お知らせ').map((m) => m.el.querySelector('.modal-body').innerText));
+    const shown = await page.evaluate(() => AL.UI.modals.filter((m) => m.opts.title === 'セーブデータについて').map((m) => m.el.querySelector('.modal-body').innerText));
     assert.equal(shown.length, 1, '開始後のお知らせが表示されていません');
     assert.ok(shown[0].includes(late), '後から加わったお知らせが表示されていません');
     assert.ok(!/読み込めなかったため新しく開始しました/.test(shown[0]), 'タイトル画面で表示済みのお知らせが繰り返されました');
@@ -2884,7 +2892,8 @@ test('ランキング：接続先が未設定なら、タイルも画面も出�
   try {
     await c2.context.route(/googleapis\.com/, (route) => route.abort('failed'));
     await openRanking(c2.page);
-    await c2.page.evaluate(() => { AL.Game.paused = false; });
+    // 速度1だと1.5秒の間に1体も倒さないことがあり、戦闘が進んでいても失敗していた（main でも断続的に失敗）。ほかのテストと同じく速度4で確かめる
+    await c2.page.evaluate(() => { AL.Game.state.settings.speed = 4; AL.Game.paused = false; });
     await c2.page.fill('#rk-name', 'りく'); await c2.page.tap('#rk-join');
     await c2.page.waitForFunction(() => /通信できません/.test(document.querySelector('#rk-name-err')?.textContent || ''));
     assert.equal(await c2.page.evaluate(() => localStorage.getItem('abyssal_legends_online')), null, '失敗したら参加済みにしない');
@@ -2895,9 +2904,304 @@ test('ランキング：接続先が未設定なら、タイルも画面も出�
   } finally { await c2.context.close(); }
 });
 
-test('GitHub Pages の公開対象が index.html・README.md・og-image.png（共有時のリンクカード画像）だけである', () => {
+// ---------- お知らせ（1.12.0）：news.json は一時サーバーがリポジトリの news.json を配信する。テストごとに page.route で差し替える ----------
+const NEWS_KEY = 'abyssal_legends_news';
+const MENU_TILES = ['quests', 'dungeon', 'rebirth', 'codex', 'achievements', 'shop', 'ranking', 'settings', 'open-report'];
+const newsDoc = (items) => JSON.stringify({ v: 1, items });
+const newsItem = (id, over = {}) => ({ id, cat: 'update', date: '2026-11-20', title: 'タイトル' + id, body: '本文' + id, ...over });
+async function routeNews(page, handler) {
+  await page.route('**/news.json', handler);
+}
+const newsServe = (body) => (route) => route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body });
+const waitNews = (page) => page.waitForFunction(() => AL.News.hasCache() && !AL.News.busy, null, { timeout: 5000 });
+const dotsShown = (page) => page.evaluate(() => [...document.querySelectorAll('.nw-dot')].filter((d) => d.offsetParent !== null && getComputedStyle(d).display !== 'none').map((d) => d.closest('[data-id]')?.dataset.id || d.closest('button')?.id));
+
+test('お知らせ：スマートフォン（360・390・430px）。「その他」のタイトル直下のボタン（3×3 のタイルはそのまま）→ 一覧 → 詳細 → 既読で赤い点が消える。セーブは変わらない', async () => {
+  for (const width of [360, 390, 430]) {
+    const { context, page, errors } = await openPhone();
+    try {
+      await page.setViewportSize({ width, height: 844 });
+      await boot(page);
+      await startAsVeteran(page);
+      await waitNews(page);
+      await page.evaluate(() => { AL.Game.paused = true; AL.Game.save(); AL.UI.show('menu'); });
+      const before = await rankSnap(page);
+      const r = await page.evaluate(() => {
+        const s = document.getElementById('screen'), bar = document.getElementById('news-bar'), q = bar.getBoundingClientRect();
+        return { order: [...s.children].map((c) => c.id || c.className), tiles: [...document.querySelectorAll('.menu-grid > .menu-tile')].map((t) => t.dataset.id || t.id),
+          sw: document.documentElement.scrollWidth, iw: innerWidth, bar: { l: q.left, r: q.right, h: q.height }, text: bar.innerText, icon: bar.querySelector('.ni').textContent };
+      });
+      const where = `${width}px`;
+      assert.deepEqual(r.order.slice(0, 3), ['screen-title', 'news-bar', 'menu-grid'], `${where}：お知らせのボタンがタイトルの直下にありません ${r.order}`);
+      assert.deepEqual(r.tiles, MENU_TILES, `${where}：「その他」のタイルが変わりました`);
+      assert.ok(r.sw <= r.iw, `${where}：横にはみ出しています`);
+      assert.ok(r.bar.l >= 0 && r.bar.r <= r.iw && r.bar.h >= 44, `${where}：お知らせのボタンの大きさ・位置 ${JSON.stringify(r.bar)}`);
+      assert.equal(r.icon, '報');
+      assert.match(r.text, /お知らせ/);
+      assert.match(r.text, /アップデート/);
+      assert.deepEqual((await dotsShown(page)).sort(), ['menu', 'news'], `${where}：未読の赤い点（「その他」・ボタン）が出ていません`);
+      await page.screenshot({ path: `${SHOTS}/phone-news-menu-${width}.png` });
+
+      await page.tap('#news-bar');
+      await page.waitForSelector('#nw-list');
+      const list = await page.evaluate(() => ({ cur: AL.UI.current, tabs: [...document.querySelectorAll('#nw-tabs button')].map((b) => b.innerText.trim()),
+        rows: [...document.querySelectorAll('.nw-row')].map((b) => b.innerText), sw: document.documentElement.scrollWidth, iw: innerWidth,
+        nav: [...document.querySelectorAll('#nav .nav-item')].filter((b) => getComputedStyle(b).display !== 'none').map((b) => b.dataset.id) }));
+      assert.equal(list.cur, 'news');
+      assert.deepEqual(list.tabs, ['すべて', '重要', 'アップデート', 'メンテナンス', 'イベント']);
+      assert.equal(list.rows.length, 1);
+      assert.match(list.rows[0], /アップデート/);
+      assert.match(list.rows[0], /2026\.11\.20/);
+      assert.match(list.rows[0], /NEW/);
+      assert.match(list.rows[0], /Ver\.1\.12\.0 お知らせ機能を追加しました/);
+      assert.ok(list.sw <= list.iw, `${where}：一覧が横にはみ出しています`);
+      assert.ok(!list.nav.includes('news'), `${where}：スマートフォンの下部ナビにお知らせが出ています`);
+      await page.screenshot({ path: `${SHOTS}/phone-news-list-${width}.png` });
+
+      await page.tap('.nw-row');
+      await page.waitForSelector('#nw-body');
+      await page.waitForTimeout(400);   // ポップアップの表示の動き（slideup）が終わってから測る
+      const d = await page.evaluate(() => {
+        const m = AL.UI.topModal('newsDetail'), box = m.el.querySelector('.modal').getBoundingClientRect();
+        return { head: m.el.querySelector('.nw-head').innerText, title: document.getElementById('nw-d-title').innerText, body: document.getElementById('nw-body').innerText,
+          btns: [...m.el.querySelectorAll('.modal-foot .btn')].map((b) => b.innerText), fit: box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight + 1 };
+      });
+      assert.match(d.head, /アップデート/);
+      assert.match(d.head, /2026\.11\.20/);
+      assert.equal(d.title, 'Ver.1.12.0 お知らせ機能を追加しました');
+      assert.ok(d.body.includes('ありがとうございます。\n\nゲーム内に公式お知らせ機能を追加しました。\n\n今後、'), `${where}：本文の改行が保たれていません ${JSON.stringify(d.body)}`);
+      assert.deepEqual(d.btns, ['一覧に戻る', '閉じる']);
+      assert.ok(d.fit, `${where}：詳細が画面からはみ出しています`);
+      await page.screenshot({ path: `${SHOTS}/phone-news-detail-${width}.png` });
+
+      // 開いたら既読：NEW と赤い点が消える
+      await page.tap('.modal-foot .btn:has-text("一覧に戻る")');
+      const after = await page.evaluate(() => ({ cur: AL.UI.current, modal: !!AL.UI.topModal('newsDetail'), rows: [...document.querySelectorAll('.nw-row')].map((b) => b.innerText),
+        unread: AL.News.unreadCount(), saved: JSON.parse(localStorage.getItem('abyssal_legends_news')).read }));
+      assert.equal(after.cur, 'news');
+      assert.equal(after.modal, false);
+      assert.ok(!/NEW/.test(after.rows[0]), `${where}：既読にしても NEW が残っています`);
+      assert.equal(after.unread, 0);
+      assert.deepEqual(after.saved, ['2026-11-20-v1-12-0-news']);
+      assert.deepEqual(await dotsShown(page), [], `${where}：既読にしても赤い点が残っています`);
+      // お知らせを開く・閉じるだけでは、セーブは変わらない
+      assert.deepEqual(await rankSnap(page), before, `${where}：お知らせの操作でセーブが変わりました`);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
+test('お知らせ：PC では上部メニューの「ガチャ」の右に並び、画面内に見え、未読の赤い点を出す', async () => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'ja-JP' });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  try {
+    await boot(page);
+    await startAsVeteran(page);
+    await waitNews(page);
+    await page.evaluate(() => { AL.Game.paused = true; });
+    const r = await page.evaluate(() => {
+      const vis = [...document.querySelectorAll('#nav .nav-item')].filter((b) => getComputedStyle(b).display !== 'none');
+      const n = document.querySelector('#nav [data-id="news"]').getBoundingClientRect();
+      return { ids: vis.map((b) => b.dataset.id), label: document.querySelector('#nav [data-id="news"]').innerText.replace(/\s+/g, ' ').trim(), inView: n.left >= 0 && n.right <= innerWidth };
+    });
+    assert.equal(r.ids.indexOf('news'), r.ids.indexOf('gacha') + 1, `お知らせが「ガチャ」の右にありません ${r.ids}`);
+    assert.equal(r.label, '報 お知らせ');
+    assert.ok(r.inView, 'お知らせが画面の外にあります');
+    assert.deepEqual(await dotsShown(page), ['news']);
+    await page.screenshot({ path: `${SHOTS}/pc-news-nav.png` });
+    await page.click('#nav [data-id="news"]');
+    await page.waitForSelector('#nw-list');
+    await page.click('.nw-row');
+    await page.waitForSelector('#nw-body');
+    await page.waitForTimeout(400);
+    assert.equal(await page.evaluate(() => !!AL.UI.topModal('newsDetail')), true, 'PC：詳細が開いていません');
+    await page.screenshot({ path: `${SHOTS}/pc-news-detail.png` });
+    await page.click('.modal-foot .btn:has-text("閉じる")');
+    assert.deepEqual(await dotsShown(page), []);
+    assert.equal(await page.evaluate(() => AL.UI.current), 'news');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('お知らせ：大量（100件超）・長文・HTML を含む内容。新しい100件・固定が先頭・HTML を解釈しない・長文はスクロール・カテゴリの絞り込み・すべて既読・再読み込みと初期化のあとも既読', async () => {
+  const { context, page, errors } = await openPhone();
+  const XSS = '<img src=x onerror="window.__xss=1"><script>window.__xss=2</script>';
+  const items = Array.from({ length: 118 }, (_, i) => newsItem('n' + i, { cat: ['update', 'maint', 'event'][i % 3], date: new Date(Date.UTC(2026, 0, 1) + i * 86400000).toISOString().slice(0, 10) }));
+  items.push(newsItem('xss', { cat: 'event', date: '2027-01-01', title: '<img src=x onerror=window.__xss=1>の題', body: '本文 ' + XSS + '\n<b>太字ではない</b>' }));   // タイトルは60文字まで
+  items.push(newsItem('long', { cat: 'important', date: '2020-01-01', pin: true, title: '長いタイトル'.repeat(10), body: ('長い本文の行です。'.repeat(8) + '\n').repeat(20).slice(0, 2000) }));
+  let hits = 0;
+  try {
+    await routeNews(page, (route) => { hits++; return newsServe(newsDoc(items))(route); });
+    await boot(page);
+    await startAsVeteran(page);
+    await waitNews(page);
+    await page.evaluate(() => { AL.Game.paused = true; AL.UI.show('news'); });
+    await page.waitForSelector('#nw-list');
+    const r = await page.evaluate(() => ({ rows: document.querySelectorAll('.nw-row').length, first: document.querySelector('.nw-row').innerText,
+      imgs: document.querySelectorAll('#screen img, #screen script').length, xss: window.__xss, unread: document.getElementById('nw-unread').innerText,
+      sw: document.documentElement.scrollWidth, iw: innerWidth, firstH: document.querySelector('.nw-row').getBoundingClientRect().height,
+      second: document.querySelectorAll('.nw-row')[1].innerText }));
+    assert.equal(r.rows, 100, '表示が100件ではありません');
+    assert.match(r.first, /重要/, '固定のお知らせが先頭にありません');
+    assert.ok(r.firstH < 120, '長いタイトルが2行で省略されていません');
+    assert.ok(r.second.includes('<img src=x onerror='), 'HTML の記号が文字として表示されていません');
+    assert.equal(r.imgs, 0, 'お知らせの HTML が解釈されました');
+    assert.equal(r.xss, undefined);
+    assert.equal(r.unread, '未読 100件');
+    assert.ok(r.sw <= r.iw);
+    await page.screenshot({ path: `${SHOTS}/phone-news-many.png` });
+    // カテゴリの絞り込み
+    await page.tap('#nw-tabs [data-id="event"]');
+    const ev = await page.evaluate(() => [...document.querySelectorAll('.nw-row .nw-cat')].map((c) => c.innerText));
+    assert.ok(ev.length > 0 && ev.every((c) => c === 'イベント'), JSON.stringify(ev));
+    await page.tap('#nw-tabs [data-id=""]');
+    // 長文：詳細はポップアップの中でスクロールでき、画面からはみ出さない。HTML は解釈しない
+    await page.tap('.nw-row');
+    await page.waitForSelector('#nw-body');
+    await page.waitForTimeout(400);
+    const lg = await page.evaluate(() => { const b = AL.UI.topModal('newsDetail').el.querySelector('.modal-body'), m = b.closest('.modal').getBoundingClientRect();
+      return { scroll: b.scrollHeight > b.clientHeight + 10, oy: getComputedStyle(b).overflowY, fit: m.top >= 0 && m.bottom <= innerHeight + 1, sw: document.documentElement.scrollWidth, iw: innerWidth }; });
+    assert.ok(lg.scroll && lg.oy === 'auto', '長文がスクロールできません');
+    assert.ok(lg.fit && lg.sw <= lg.iw, '長文の詳細が画面からはみ出しています');
+    await page.screenshot({ path: `${SHOTS}/phone-news-long.png` });
+    await page.tap('.modal-foot .btn:has-text("閉じる")');
+    await page.tap('.nw-row:has-text("の題")');
+    await page.waitForSelector('#nw-body');
+    const x = await page.evaluate(() => ({ body: document.getElementById('nw-body').innerText, title: document.getElementById('nw-d-title').innerText,
+      tags: document.querySelectorAll('.modal img, .modal script, #nw-body b').length, xss: window.__xss }));
+    assert.ok(x.title.startsWith('<img src=x'), x.title);
+    assert.ok(x.body.includes('<b>太字ではない</b>'));
+    assert.equal(x.tags, 0);
+    assert.equal(x.xss, undefined);
+    await page.tap('.modal-foot .btn:has-text("閉じる")');
+    // すべて既読
+    await page.tap('#nw-allread');
+    const all = await page.evaluate(() => ({ unread: AL.News.unreadCount(), news: document.querySelectorAll('.nw-new').length, dis: document.getElementById('nw-allread').disabled }));
+    assert.deepEqual(all, { unread: 0, news: 0, dis: true });
+    assert.deepEqual(await dotsShown(page), []);
+    // 再読み込み：5分以内は取りに行かず、既読のまま
+    await boot(page);
+    await startAsVeteran(page);
+    await page.evaluate(() => { AL.Game.paused = true; AL.UI.show('news'); });
+    await page.waitForSelector('#nw-list');
+    assert.equal(await page.evaluate(() => AL.News.unreadCount()), 0, '再読み込みで既読が消えました');
+    assert.equal(hits, 1, '5分以内にもう一度取りに行きました');
+    // データの初期化（設定画面と同じ処理）のあとも既読のまま。セーブは消える
+    const before = await page.evaluate((k) => localStorage.getItem(k), NEWS_KEY);
+    const reset = await page.evaluate(() => AL.Game.resetAll());
+    assert.equal(reset.ok, true);
+    const afterReset = await page.evaluate((k) => ({ news: localStorage.getItem(k), saveGone: !localStorage.getItem('abyssal_legends_save_backup') }), NEWS_KEY);
+    assert.equal(afterReset.news, before, '初期化でお知らせの既読が消えました');
+    assert.equal(afterReset.saveGone, true, '前提：初期化でセーブのバックアップが消えていません');
+    await boot(page);
+    assert.equal(await page.evaluate(() => AL.News.unreadCount()), 0, '初期化のあとで既読が消えました');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('お知らせ：通信の失敗・遅延・壊れた JSON でもゲームは止まらず、エラーの通知を出さない。前回の内容があればそれを表示する', async () => {
+  // 1) 通信できない（初回）→ 取得できない旨を表示。戦闘は進む。赤いエラーの通知は出さない
+  let c = await openPhone();
+  try {
+    await routeNews(c.page, (route) => route.abort('internetdisconnected'));
+    await boot(c.page);
+    await startAsVeteran(c.page);
+    await c.page.waitForFunction(() => AL.News.lastError && !AL.News.busy);
+    const k0 = await c.page.evaluate(() => { AL.Game.state.settings.speed = 4; return AL.Game.state.stats.kills; });
+    await c.page.waitForTimeout(1500);
+    assert.notEqual(await c.page.evaluate(() => AL.Game.state.stats.kills), k0, '通信の失敗で戦闘が止まりました');
+    await c.page.evaluate(() => { AL.Game.paused = true; AL.UI.show('menu'); });
+    const bar = await c.page.innerText('#news-bar');
+    assert.match(bar, /お知らせを見る/);
+    assert.deepEqual(await dotsShown(c.page), []);
+    await c.page.tap('#news-bar');
+    assert.match(await c.page.innerText('#nw-error'), /いまはお知らせを取得できません/);
+    assert.equal(await c.page.evaluate(() => document.querySelectorAll('#toasts .toast.bad').length), 0, 'エラーの通知が出ています');
+    await c.page.screenshot({ path: `${SHOTS}/phone-news-offline.png` });
+    assert.deepEqual(c.errors.filter((e) => !/Failed to load resource|net::ERR/.test(e)), []);
+  } finally { await c.context.close(); }
+
+  // 2) 壊れた JSON・HTML のページ（404 の代わり）→ 取得できない旨。例外は出ない
+  for (const body of ['{broken', '<!doctype html><title>404</title>', '{"v":9,"items":[]}']) {
+    c = await openPhone();
+    try {
+      await routeNews(c.page, newsServe(body));
+      await boot(c.page);
+      await startAsVeteran(c.page);
+      await c.page.waitForFunction(() => AL.News.lastError === 'bad_data');
+      await c.page.evaluate(() => { AL.Game.paused = true; AL.UI.show('news'); });
+      assert.match(await c.page.innerText('#nw-error'), /いまはお知らせを取得できません/);
+      assert.deepEqual(c.errors, [], body);
+    } finally { await c.context.close(); }
+  }
+
+  // 3) 遅い応答：読み込み中を表示し、届いたら一覧を出す
+  c = await openPhone();
+  try {
+    await routeNews(c.page, async (route) => { await new Promise((r) => setTimeout(r, 1500)); await newsServe(newsDoc([newsItem('slow')]))(route); });
+    await boot(c.page);
+    await startAsVeteran(c.page);
+    await c.page.evaluate(() => { AL.Game.paused = true; AL.UI.show('news'); });
+    assert.ok(await c.page.isVisible('#nw-loading'), '読み込み中の表示がありません');
+    await c.page.waitForSelector('#nw-list', { timeout: 5000 });
+    assert.match(await c.page.innerText('#nw-list'), /タイトルslow/);
+
+    // 4) 前回の内容がある状態で失敗 → 前回の一覧を表示し、取得できなかったことを添える
+    await c.page.unroute('**/news.json');
+    await routeNews(c.page, (route) => route.fulfill({ status: 503, body: 'down' }));
+    await c.page.evaluate(() => AL.UI.newsRefresh(true));
+    await c.page.waitForSelector('#nw-error');
+    assert.match(await c.page.innerText('#nw-error'), /前回の内容を表示しています/);
+    assert.match(await c.page.innerText('#nw-list'), /タイトルslow/);
+    assert.equal(await c.page.evaluate(() => document.querySelectorAll('#toasts .toast.bad').length), 0);
+    assert.deepEqual(c.errors.filter((e) => !/Failed to load resource|503/.test(e)), []);
+  } finally { await c.context.close(); }
+
+  // 5) 保存領域が壊れていても起動・表示できる
+  c = await openPhone();
+  try {
+    await c.page.goto(`${baseURL}/__blank`);
+    await c.page.evaluate((k) => { localStorage.clear(); localStorage.setItem(k, '{"v":1,"read":'); }, NEWS_KEY);
+    await boot(c.page);
+    await startAsVeteran(c.page);
+    await waitNews(c.page);
+    await c.page.evaluate(() => { AL.Game.paused = true; AL.UI.show('news'); });
+    assert.equal(await c.page.locator('.nw-row').count(), 1);
+    assert.deepEqual(c.errors, []);
+  } finally { await c.context.close(); }
+});
+
+test('お知らせ：導入中（初回召喚の前）でも開け、起動時にポップアップを出さない。ランキングには通信しない', async () => {
+  const { context, page, errors } = await openPhone();
+  const google = [];
+  await context.route(/googleapis\.com/, (route) => { google.push(route.request().url()); return route.abort(); });
+  try {
+    await boot(page);
+    await page.click('[data-title="new"]');
+    await waitNews(page);
+    const g = await page.evaluate(() => ({ step: AL.Game.state.guide.step, modals: AL.UI.modals.map((m) => m.id || m.opts.title) }));
+    assert.equal(g.step, 'summon');
+    assert.deepEqual(g.modals, ['guideSummon'], '起動時にお知らせのポップアップが出ています');
+    await page.evaluate(() => { AL.UI.closeModal(); AL.UI.show('news'); });
+    assert.equal(await page.evaluate(() => AL.UI.current), 'news', '導入中にお知らせを開けません');
+    await page.waitForSelector('#nw-list');
+    // 既存プレイヤーも、起動後にポップアップは出ない
+    await boot(page);
+    await startAsVeteran(page);
+    await waitNews(page);
+    assert.deepEqual(await page.evaluate(() => AL.UI.modals.map((m) => m.id || m.opts.title)), []);
+    assert.deepEqual(google, [], 'ランキングに参加していないのに通信しました');
+    assert.equal(await page.evaluate(() => localStorage.getItem('abyssal_legends_online')), null);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('GitHub Pages の公開対象が index.html・README.md・og-image.png（共有時のリンクカード画像）・news.json（お知らせ）だけである', () => {
   const published = trackedFiles().filter((f) => isPublished(f, pagesExcludes())).sort();
-  assert.deepEqual(published, ['README.md', 'index.html', 'og-image.png'],
+  assert.deepEqual(published, ['README.md', 'index.html', 'news.json', 'og-image.png'],
     '公開サイトに開発用のファイルが出ます。公開しないファイルは _config.yml の exclude に追加してください');
 });
 
