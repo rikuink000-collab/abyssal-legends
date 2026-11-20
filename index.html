@@ -4779,7 +4779,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   };
   // 並び：固定（pin）→ 日付の新しい順 → 同じ日付はファイルの順。重複した ID は最初の1件だけ。上限を超えた古いものは使わない
   N.normalize = function (list) {
-    var seen = {}, out = [], dropped = 0;
+    var seen = Object.create(null), out = [], dropped = 0;   // constructor・toString などの ID も正しく数える
     (Array.isArray(list) ? list : []).forEach(function (raw, i) {
       var it = N.cleanItem(raw);
       if (!it || seen[it.id]) { dropped++; return; }
@@ -4813,7 +4813,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
     if (!raw) return blank();
     try { o = JSON.parse(raw); } catch (e) { return blank(); }
     if (!o || typeof o !== 'object' || o.v !== 1) return blank();
-    var seen = {}, read = (Array.isArray(o.read) ? o.read : []).filter(function (id) {
+    var seen = Object.create(null), read = (Array.isArray(o.read) ? o.read : []).filter(function (id) {
       if (!N.idOk(id) || seen[id]) return false;
       seen[id] = true; return true;
     }).slice(-N.LIMITS.readMax);

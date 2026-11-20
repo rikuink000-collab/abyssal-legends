@@ -104,6 +104,12 @@ test('ID が重複したら最初の1件だけ使う', () => {
   const r = N.parse(doc([item('dup', { title: '最初' }), item('dup', { title: '2件目' }), item('other')]));
   eq(r.items.map((x) => [x.id, x.title]), [['dup', '最初'], ['other', 'タイトルother']]);
   assert.equal(r.dropped, 1);
+  // 組み込みの名前と同じ ID（constructor・toString など）も、重複と誤判定しない
+  const b = N.parse(doc([item('constructor'), item('toString'), item('valueOf'), item('constructor')]));
+  eq(b.items.map((x) => x.id), ['constructor', 'toString', 'valueOf']);
+  assert.equal(b.dropped, 1);
+  const { N: N2 } = game(memoryStorage({ abyssal_legends_news: JSON.stringify({ v: 1, read: ['constructor', 'toString', 'constructor'], cache: null }) }));
+  eq(N2.store().read, ['constructor', 'toString']);
 });
 
 test('並び：固定（pin）が先頭、次に日付の新しい順、同じ日付はファイルの順。100件を超えた古いものは使わない', () => {
