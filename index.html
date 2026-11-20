@@ -357,6 +357,31 @@ label.toggle:last-child { border-bottom: none; }
 .rf-opt { background: var(--panel2); color: var(--dim); }
 .rf select, .rf input[type=text], .rf input[type=email], .rf textarea { width: 100%; font-size: 16px; min-height: 44px; }
 .rf textarea { font-family: inherit; min-height: 110px; resize: vertical; }
+/* お知らせ（js/ui/news.js） */
+.nw-dot { position: absolute; top: 3px; right: calc(50% - 21px); width: 9px; height: 9px; border-radius: 50%; background: var(--bad); box-shadow: 0 0 0 2px rgba(14, 12, 24, 0.97); pointer-events: none; }
+.nw-dot[hidden] { display: none; }
+.nav-item.menu-btn .nw-dot { right: auto; left: calc(50% - 21px); }   /* 「その他」は右上に実績の数字が出るため、点は左上 */
+@media (min-width: 900px) { #nav .nav-item .nw-dot { top: 4px; right: 4px; } }
+.nw-bar { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 52px; margin-bottom: 8px; padding: 8px 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); cursor: pointer; text-align: left; position: relative; font-weight: 800; }
+.nw-bar .ni { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; background: var(--panel2); font-size: 18px; }
+.nw-bar-name { flex: none; }
+.nw-bar-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 400; color: var(--sub); }
+.nw-bar .nw-dot { position: static; flex: none; }
+.nw-cat { flex: none; display: inline-block; font-size: 11px; font-weight: 800; line-height: 1.6; padding: 0 7px; border-radius: 6px; color: #fff; white-space: nowrap; }
+.nw-cat.nw-important { background: var(--bad); }
+.nw-cat.nw-update { background: var(--accent); }
+.nw-cat.nw-maint { background: var(--warn); color: #1a1200; }
+.nw-cat.nw-event { background: var(--good); color: #06240f; }
+.nw-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.nw-row { display: block; width: 100%; min-height: 48px; padding: 9px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); text-align: left; cursor: pointer; }
+.nw-row.unread { background: var(--panel2); border-color: var(--line2); }
+.nw-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.nw-date { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.nw-new { font-size: 10px; font-weight: 900; letter-spacing: 0.05em; color: var(--bad); }
+.nw-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 3px; font-weight: 800; overflow-wrap: anywhere; word-break: break-word; }
+.nw-foot { margin-top: 10px; }
+.nw-d-title { margin: 8px 0; font-size: 17px; overflow-wrap: anywhere; word-break: break-word; }
+.nw-body { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 14px; line-height: 1.75; }
 /* ランキング（js/ui/ranking.js） */
 .rk-join input[type=text] { width: 100%; font-size: 16px; min-height: 44px; }
 .rk-ul { margin: 4px 0 6px; padding-left: 20px; font-size: 13px; }
@@ -637,7 +662,7 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
   var AL = G.AL = G.AL || {};
 
   AL.CONFIG = {
-    GAME_VERSION: '1.11.0',
+    GAME_VERSION: '1.12.0',
     SAVE_VERSION: 3,                  // セーブ構造のバージョン（state.js の MIGRATIONS と対応）
     SAVE_KEY: 'abyssal_legends_save',
     BACKUP_KEY: 'abyssal_legends_save_backup',
@@ -663,6 +688,15 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
       TIMEOUT_MS: 15000,              // 応答を待つ時間（ミリ秒）
       COOLDOWN_SEC: 60,               // 記録を送る最短の間隔（秒）。firestore.rules の 60 秒と同じ
       CACHE_SEC: 300                  // 取得したランキングを使い回す時間（秒）。無料枠の読み取り回数を抑える
+    },
+
+    // ---- お知らせ（js/core/news.js） ----
+    // URL：公開サイトの news.json（index.html と同じ場所の相対パス）。KEY：既読と前回の一覧の保存先（セーブとは別のキー。初期化でも消さない）
+    NEWS: {
+      URL: 'news.json',
+      KEY: 'abyssal_legends_news',
+      TIMEOUT_MS: 10000,              // 応答を待つ時間（ミリ秒）
+      INTERVAL_SEC: 300               // 取りに行く最短の間隔（秒）。起動時とお知らせ画面を開いたときに、この間隔があいていれば取得する
     },
 
     // ---- 戦闘 ----
@@ -4694,6 +4728,180 @@ body.has-guide #app { padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bo
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
+<script>/* js/core/news.js */
+/* ABYSSAL LEGENDS - お知らせ（取得・検証・既読の保存）
+ * 公開サイトの news.json（index.html と同じ場所。AL.CONFIG.NEWS.URL）を取得し、検証してから表示用の一覧にします。
+ * ゲームの状態（state）・セーブ・戦闘・乱数（U.rng）には触れません。ランキング・報告フォームとも処理を共有しません。
+ * 既読と前回取得した一覧は、セーブとは別のキー（AL.CONFIG.NEWS.KEY）に保存します。セーブ本体・書き出しテキストには入れず、
+ * データの初期化でも消しません。保存内容が壊れていたら黙って作り直します（全件が未読に戻るだけ）。
+ * 通信の失敗・不正なデータでは例外を投げず、前回の一覧をそのまま使います（ゲームは止めない）。 */
+(function (G) {
+  'use strict';
+  var AL = G.AL = G.AL || {};
+  var C = AL.CONFIG;
+
+  var N = AL.News = {};
+  // カテゴリ（news.json の cat）と表示名。並びはタブの順
+  N.CATS = { important: '重要', update: 'アップデート', maint: 'メンテナンス', event: 'イベント' };
+  N.CAT_ORDER = ['important', 'update', 'maint', 'event'];
+  // 上限：タイトル・本文の文字数（UTF-16 の単位）、表示する件数、news.json の大きさ（文字数）、既読として覚える件数、ID の長さ
+  N.LIMITS = { titleMax: 60, bodyMax: 2000, items: 100, bytes: 100000, readMax: 300, idMax: 64 };
+
+  function cfg() { return C.NEWS || {}; }
+  N.key = function () { return cfg().KEY || 'abyssal_legends_news'; };
+  N.url = function () { return cfg().URL || 'news.json'; };
+  N.intervalMs = function () { return (cfg().INTERVAL_SEC || 300) * 1000; };
+  N.timeoutMs = function () { return cfg().TIMEOUT_MS || 10000; };
+
+  // ---- 検証 ----
+  N.idOk = function (id) { return typeof id === 'string' && id.length <= N.LIMITS.idMax && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id); };
+  N.dateOk = function (s) {
+    var m = typeof s === 'string' && /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    if (!m) return false;
+    var y = +m[1], mo = +m[2], d = +m[3], t = new Date(Date.UTC(y, mo - 1, d));
+    return y >= 2000 && y <= 2999 && t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d;
+  };
+  // 制御文字・書式文字を取り除く（本文の改行とタブは残す）。改行は \n にそろえる
+  function cleanText(s, keepLines) {
+    s = String(s).replace(/\r\n?/g, '\n');
+    s = keepLines ? s.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]/g, '')
+      : s.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E\u2060-\u206F\uFEFF]/g, ' ').replace(/\s+/g, ' ');
+    return s.trim();
+  }
+  // 1件を検証して表示用の形にする。不正なら null
+  N.cleanItem = function (o) {
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+    if (!N.idOk(o.id) || !Object.prototype.hasOwnProperty.call(N.CATS, o.cat) || !N.dateOk(o.date)) return null;
+    if (typeof o.title !== 'string' || typeof o.body !== 'string') return null;
+    var title = cleanText(o.title, false), body = cleanText(o.body, true);
+    if (!title || title.length > N.LIMITS.titleMax || !body || body.length > N.LIMITS.bodyMax) return null;
+    return { id: o.id, cat: o.cat, date: o.date, title: title, body: body, pin: o.pin === true };
+  };
+  // 並び：固定（pin）→ 日付の新しい順 → 同じ日付はファイルの順。重複した ID は最初の1件だけ。上限を超えた古いものは使わない
+  N.normalize = function (list) {
+    var seen = Object.create(null), out = [], dropped = 0;   // constructor・toString などの ID も正しく数える
+    (Array.isArray(list) ? list : []).forEach(function (raw, i) {
+      var it = N.cleanItem(raw);
+      if (!it || seen[it.id]) { dropped++; return; }
+      seen[it.id] = true;
+      it._i = i;
+      out.push(it);
+    });
+    out.sort(function (a, b) {
+      if (a.pin !== b.pin) return a.pin ? -1 : 1;
+      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+      return a._i - b._i;
+    });
+    if (out.length > N.LIMITS.items) { dropped += out.length - N.LIMITS.items; out.length = N.LIMITS.items; }
+    return { items: out.map(function (it) { return { id: it.id, cat: it.cat, date: it.date, title: it.title, body: it.body, pin: it.pin }; }), dropped: dropped };
+  };
+  // news.json の文字列を読む。{ok:true, items, dropped} か {ok:false, kind:'bad_data'}
+  N.parse = function (text) {
+    if (typeof text !== 'string' || !text || text.length > N.LIMITS.bytes) return { ok: false, kind: 'bad_data' };
+    var o;
+    try { o = JSON.parse(text); } catch (e) { return { ok: false, kind: 'bad_data' }; }
+    if (!o || typeof o !== 'object' || o.v !== 1 || !Array.isArray(o.items)) return { ok: false, kind: 'bad_data' };
+    var r = N.normalize(o.items);
+    return { ok: true, items: r.items, dropped: r.dropped };
+  };
+
+  // ---- 保存（セーブとは別のキー） ----
+  // { v:1, read:[既読の ID（古い順）], cache:{ items:[検証済みの一覧], fetchedAt:取得できた時刻 } | null }
+  function blank() { return { v: 1, read: [], cache: null }; }
+  N.readStore = function () {
+    var raw = AL.Storage ? AL.Storage.get(N.key()) : null, o;
+    if (!raw) return blank();
+    try { o = JSON.parse(raw); } catch (e) { return blank(); }
+    if (!o || typeof o !== 'object' || o.v !== 1) return blank();
+    var seen = Object.create(null), read = (Array.isArray(o.read) ? o.read : []).filter(function (id) {
+      if (!N.idOk(id) || seen[id]) return false;
+      seen[id] = true; return true;
+    }).slice(-N.LIMITS.readMax);
+    var cache = null, c = o.cache;
+    if (c && typeof c === 'object' && Array.isArray(c.items)) {
+      var at = Number(c.fetchedAt);
+      cache = { items: N.normalize(c.items).items, fetchedAt: isFinite(at) && at > 0 ? at : 0 };
+    }
+    return { v: 1, read: read, cache: cache };
+  };
+  N.data = null;   // メモリ上の内容（最初に使うときに読み込む）
+  N.store = function () { if (!N.data) N.data = N.readStore(); return N.data; };
+  N.persist = function () { try { return !!(AL.Storage && AL.Storage.set(N.key(), JSON.stringify(N.store()))); } catch (e) { return false; } };
+
+  // ---- 一覧・既読 ----
+  N.items = function (cat) {
+    var c = N.store().cache, list = c ? c.items : [];
+    return cat && N.CATS[cat] ? list.filter(function (it) { return it.cat === cat; }) : list.slice();
+  };
+  N.fetchedAt = function () { var c = N.store().cache; return c ? c.fetchedAt : 0; };
+  N.hasCache = function () { return !!N.store().cache; };
+  N.isRead = function (id) { return N.store().read.indexOf(id) >= 0; };
+  N.unread = function (cat) { return N.items(cat).filter(function (it) { return !N.isRead(it.id); }); };
+  N.unreadCount = function (cat) { return N.unread(cat).length; };
+  function addRead(ids) {
+    var d = N.store(), changed = false;
+    ids.forEach(function (id) { if (N.idOk(id) && d.read.indexOf(id) < 0) { d.read.push(id); changed = true; } });
+    if (!changed) return false;
+    if (d.read.length > N.LIMITS.readMax) d.read = d.read.slice(-N.LIMITS.readMax);
+    N.persist();
+    return true;
+  }
+  N.markRead = function (id) { return addRead([id]); };
+  N.markAllRead = function () { return addRead(N.items().map(function (it) { return it.id; })); };
+
+  // ---- 通信 ----
+  // 1回の取得。{ok:true, items, dropped} か {ok:false, kind}（kind：network・timeout・http・bad_data）
+  N.fetchOnce = function (opts) {
+    opts = opts || {};
+    var fetchFn = opts.fetch || G.fetch;
+    function fail(kind) { return { ok: false, kind: kind }; }
+    if (typeof fetchFn !== 'function') return Promise.resolve(fail('network'));
+    var ctl = null, timer = null;
+    try { if (G.AbortController) ctl = new G.AbortController(); } catch (e) { ctl = null; }
+    var timedOut = new Promise(function (res) { timer = setTimeout(function () { if (ctl) { try { ctl.abort(); } catch (e) { /* 無視 */ } } res(fail('timeout')); }, opts.timeoutMs || N.timeoutMs()); });
+    var req;
+    try { req = Promise.resolve(fetchFn(N.url(), { method: 'GET', cache: 'no-cache', credentials: 'omit', signal: ctl ? ctl.signal : undefined })); }
+    catch (e) { clearTimeout(timer); return Promise.resolve(fail('network')); }
+    var work = req.then(function (resp) {
+      if (!resp || !resp.ok) return fail('http');
+      return resp.text().then(function (text) { return N.parse(text); }, function () { return fail('network'); });
+    }, function () { return fail('network'); }).catch(function () { return fail('bad_data'); });
+    return Promise.race([work, timedOut]).then(function (r) { clearTimeout(timer); return r; });
+  };
+
+  N.busy = null;          // 取得中の Promise（同時に2回取りに行かない）
+  N.lastTryAt = 0;        // このセッションで最後に取りに行った時刻（失敗を含む）
+  N.lastError = null;     // 最後の取得の失敗（kind）。成功したら null
+  // 取りに行くべきか：前回の取得（成功は保存された時刻、失敗はこのセッションの時刻）から間隔があいているか。時刻が戻っていたら取りに行く
+  N.due = function (now) {
+    var iv = N.intervalMs();
+    function old(t) { return !t || now - t >= iv || now < t; }
+    return old(N.fetchedAt()) && old(N.lastTryAt);
+  };
+  // 必要なら取得して一覧を更新する。常に成功の Promise を返す（例外を外に出さない）。
+  // 結果：{ok:true, skipped:true}（間隔内）／{ok:true, changed}／{ok:false, kind}
+  N.refresh = function (opts) {
+    opts = opts || {};
+    if (N.busy) return N.busy;
+    var now = opts.now != null ? opts.now : Date.now();
+    try { if (!opts.force && !N.due(now)) return Promise.resolve({ ok: true, skipped: true }); }
+    catch (e) { return Promise.resolve({ ok: false, kind: 'bad_data' }); }
+    N.lastTryAt = now;
+    var p = N.fetchOnce(opts).then(function (r) {
+      if (!r.ok) { N.lastError = r.kind; return r; }
+      var d = N.store(), before = JSON.stringify(d.cache ? d.cache.items : null);
+      d.cache = { items: r.items, fetchedAt: opts.now != null ? opts.now : Date.now() };
+      N.lastError = null;
+      N.persist();
+      return { ok: true, changed: before !== JSON.stringify(r.items), dropped: r.dropped };
+    }).catch(function () { N.lastError = 'bad_data'; return { ok: false, kind: 'bad_data' }; })
+      .then(function (r) { N.busy = null; if (AL.Events) AL.Events.emit('news', r); return r; });
+    N.busy = p;
+    return p;
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
 <script>/* js/core/game.js */
 /* ABYSSAL LEGENDS - セーブ管理とゲーム本体（ループ・時間管理） */
 (function (G) {
@@ -6174,7 +6382,8 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     });
   };
 
-  UI.NAV_ORDER = ['battle', 'heroes', 'quests', 'equip', 'gacha', 'menu'];
+  // お知らせ（news）は PC の上部メニューで「ガチャ」の右に並べる（スマートフォンでは下部ナビに出さず、「その他」画面の上部のボタンから開く）
+  UI.NAV_ORDER = ['battle', 'heroes', 'quests', 'equip', 'gacha', 'news', 'menu'];
   UI.SUPPORT_ICON = '問';   // サポート（不具合・ご意見の報告）のアイコン。その他の機能と同じく漢字1文字
   function navRank(id) { var i = UI.NAV_ORDER.indexOf(id); return i >= 0 ? i : 100 + UI.order.indexOf(id); }
   UI.renderNav = function () {
@@ -6188,7 +6397,9 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
       if (!s.nav || !AL.Guide.unlocked(UI.st(), id)) return;
       var on = UI.current === id || cur.parent === id || (id === 'menu' && cur.nav === 'more');
       var cls = 'nav-item' + (on ? ' active' : '') + (s.nav === 'more' ? ' more-only' : '') + (id === 'menu' ? ' menu-btn' : '');
-      html += '<button class="' + cls + '" data-act="nav" data-id="' + id + '"><span class="ni">' + s.icon + '</span><span>' + s.name + '</span><span class="badge" id="badge-' + id + '"></span></button>';
+      // お知らせの未読は、数字のバッジとは別の赤い点で示す（「その他」とPCの「お知らせ」）
+      var dot = id === 'menu' || id === 'news' ? '<span class="nw-dot" hidden></span>' : '';
+      html += '<button class="' + cls + '" data-act="nav" data-id="' + id + '"><span class="ni">' + s.icon + '</span><span>' + s.name + '</span><span class="badge" id="badge-' + id + '"></span>' + dot + '</button>';
     });
     // 広い画面では「その他」画面を使わないため、サポート（報告フォーム）も上部のメニューに並べる（スマートフォンでは「その他」のタイル）
     html += '<button class="nav-item more-only" id="nav-support" data-id="support" data-act="openReport"><span class="ni">' + UI.SUPPORT_ICON + '</span><span>サポート</span></button>';
@@ -6206,6 +6417,7 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     set('battle', AL.Game.pendingIdle ? '!' : '');
     set('menu', ach || '');
     set('dungeon', st.currency.tickets >= AL.CONFIG.TICKETS.MAX && st.stats.maxFloorEver >= 15 && AL.Guide.unlocked(st, 'dungeon') ? '!' : '');
+    if (UI.updateNewsDots) UI.updateNewsDots();
   };
 
   // ---- 通貨表示 ----
@@ -7257,7 +7469,8 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     render: function (el) {
       // ランキングは接続先が設定されているときだけ（js/ui/ranking.js が画面を登録する）。設定・サポートは最終行のまま
       var tiles = ['quests', 'dungeon', 'rebirth', 'codex', 'achievements', 'shop'].concat(UI.screens.ranking ? ['ranking'] : [], ['settings']);
-      el.innerHTML = '<div class="screen-title">メニュー</div><div class="menu-grid">' + tiles.map(function (id) {
+      // お知らせ：タイトル直下の横長のボタン（js/ui/news.js）。3×3 のタイルはそのまま
+      el.innerHTML = '<div class="screen-title">メニュー</div>' + (UI.newsBarHtml ? UI.newsBarHtml() : '') + '<div class="menu-grid">' + tiles.map(function (id) {
         var s = UI.screens[id];
         if (!AL.Guide.unlocked(UI.st(), id)) return '<button class="menu-tile locked" disabled><span class="ni">🔒</span>' + s.name + '<span class="lock">' + esc(UI.lockText(id)) + '</span></button>';
         return '<button class="menu-tile" data-act="nav" data-id="' + id + '"><span class="ni">' + s.icon + '</span>' + s.name + '<span class="badge" id="badge-m-' + id + '"></span></button>';
@@ -8038,6 +8251,114 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
 })(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
+<script>/* js/ui/news.js */
+/* ABYSSAL LEGENDS - お知らせの画面（一覧・詳細・「その他」画面の上部ボタン・未読の赤い点）
+ * データは AL.News（js/core/news.js）。この区画はゲームの状態・セーブには触れません。
+ * 起動時にポップアップは出しません（未読は赤い点で知らせるだけ）。通信の失敗でエラーの通知（トースト）も出しません。
+ * お知らせの文字は、すべて esc() を通して表示します（HTML として解釈しない。リンクも作らない）。 */
+(function (G) {
+  'use strict';
+  var AL = G.AL = G.AL || {};
+  var U = AL.U, UI = AL.UI, N = AL.News;
+  var esc = U.esc, ui = UI.ui;
+
+  UI.NEWS_ICON = '報';
+  var TABS = [['', 'すべて']].concat(N.CAT_ORDER.map(function (c) { return [c, N.CATS[c]]; }));
+
+  function catTag(cat) { return '<span class="nw-cat nw-' + esc(cat) + '">' + esc(N.CATS[cat] || '') + '</span>'; }
+  function dateText(d) { return esc(String(d).replace(/-/g, '.')); }
+  function timeText(t) { var d = new Date(t); return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
+  function tab() { var t = ui.newsTab; return t && N.CATS[t] ? t : ''; }
+
+  // 取得（間隔内なら通信しない）。終わったら未読の点と、開いている画面を更新する
+  UI.newsRefresh = function (force) {
+    return N.refresh({ force: !!force }).then(function (r) {
+      UI.updateNewsDots();
+      if (UI.current === 'news' || UI.current === 'menu') UI.refresh();
+      return r;
+    });
+  };
+  // 起動後（タイトル画面から始めたあと）に裏で1回取りに行く
+  UI.newsStart = function () { UI.newsRefresh(false); };
+
+  // ---- 未読の赤い点（下部ナビの「その他」・PC の上部メニューの「お知らせ」） ----
+  UI.updateNewsDots = function () {
+    var on = N.unreadCount() > 0;
+    UI.$$('.nw-dot').forEach(function (d) { if (d.hidden === on) d.hidden = !on; });
+  };
+
+  // ---- 「その他」画面のタイトル直下のボタン ----
+  UI.newsBarHtml = function () {
+    var list = N.items(), n = N.unreadCount(), top = list[0];
+    var info = top ? catTag(top.cat) + '<span class="nw-bar-t">' + esc(top.title) + '</span>' : '<span class="nw-bar-t">お知らせを見る</span>';
+    return '<button class="nw-bar" id="news-bar" data-act="nav" data-id="news" aria-label="お知らせ' + (n ? '（未読 ' + n + '件）' : '') + '">' +
+      '<span class="ni">' + UI.NEWS_ICON + '</span><span class="nw-bar-name">お知らせ</span>' + info +
+      '<span class="nw-dot nw-bar-dot"' + (n ? '' : ' hidden') + '></span></button>';
+  };
+
+  // ---- 一覧 ----
+  function statusHtml() {
+    var has = N.hasCache(), err = N.lastError, busy = !!N.busy;
+    if (!has) {
+      if (busy || !err) return '<div class="small sub nw-status" id="nw-loading">読み込んでいます…</div>';
+      return '<div class="notice nw-status" id="nw-error" role="alert">いまはお知らせを取得できません。電波の状態を確認して、しばらくしてからもう一度開いてください。</div>';
+    }
+    if (err && !busy) return '<div class="notice nw-status" id="nw-error" role="alert">最新のお知らせを取得できませんでした（前回の内容を表示しています）。</div>';
+    return '';
+  }
+  function listHtml(cat) {
+    if (!N.hasCache()) return '';
+    var list = N.items(cat);
+    if (!list.length) return '<div class="small sub">' + (cat ? 'このカテゴリのお知らせはありません。' : 'お知らせはまだありません。') + '</div>';
+    return '<ul class="nw-list" id="nw-list">' + list.map(function (it) {
+      var unread = !N.isRead(it.id);
+      return '<li><button class="nw-row' + (unread ? ' unread' : '') + '" data-act="newsOpen" data-id="' + esc(it.id) + '">' +
+        '<span class="nw-head">' + catTag(it.cat) + '<span class="nw-date">' + dateText(it.date) + '</span>' + (unread ? '<span class="nw-new">NEW</span>' : '') + '</span>' +
+        '<span class="nw-title">' + esc(it.title) + '</span></button></li>';
+    }).join('') + '</ul>';
+  }
+
+  UI.register({
+    id: 'news', name: 'お知らせ', icon: UI.NEWS_ICON, nav: 'more',
+    onShow: function () { UI.newsRefresh(false); },
+    render: function (el) {
+      var cat = tab(), n = N.unreadCount(), at = N.fetchedAt();
+      el.innerHTML = '<div class="screen-title">お知らせ' + (n ? ' <span class="tag" id="nw-unread">未読 ' + n + '件</span>' : '') + '</div>' +
+        '<div class="tabs nw-tabs" id="nw-tabs">' + TABS.map(function (t) {
+          return '<button class="' + (t[0] === cat ? 'on' : '') + '" data-act="newsTab" data-id="' + t[0] + '">' + t[1] + '</button>';
+        }).join('') + '</div>' +
+        statusHtml() + listHtml(cat) +
+        (N.hasCache() ? '<div class="nw-foot"><div class="tiny dim" id="nw-fetched">' + (at ? '最終取得 ' + timeText(at) + '　' : '') + '新しいお知らせは、ゲームの起動時とこの画面を開いたときに確認します（5分に1回まで）。</div>' +
+          '<button class="btn ghost block mt" id="nw-allread" data-act="newsAllRead"' + (n ? '' : ' disabled') + '>すべて既読にする</button></div>' : '');
+      UI.updateNewsDots();
+    }
+  });
+
+  UI.action('newsTab', function (el) { ui.newsTab = el.dataset.id || ''; UI.render(); });
+  UI.action('newsAllRead', function () { N.markAllRead(); UI.updateNewsDots(); UI.render(); });
+
+  // ---- 詳細（ポップアップ） ----
+  UI.showNews = function (id) {
+    var it = N.items().filter(function (x) { return x.id === id; })[0];
+    if (!it) return;
+    N.markRead(it.id);
+    UI.closeModal('newsDetail');
+    UI.modal({
+      id: 'newsDetail', title: 'お知らせ',
+      html: '<div class="nw-detail"><div class="nw-head">' + catTag(it.cat) + '<span class="nw-date">' + dateText(it.date) + '</span></div>' +
+        '<h3 class="nw-d-title" id="nw-d-title">' + esc(it.title) + '</h3><div class="nw-body" id="nw-body">' + esc(it.body) + '</div></div>',
+      buttons: [
+        { label: '一覧に戻る', cls: 'ghost', onClick: function () { if (UI.current !== 'news') UI.show('news'); } },
+        { label: '閉じる', cls: 'primary' }
+      ]
+    });
+    UI.updateNewsDots();
+    if (UI.current === 'news' || UI.current === 'menu') UI.render();
+  };
+  UI.action('newsOpen', function (el) { UI.showNews(el.dataset.id); });
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
 <script>/* js/ui/quests.js */
 /* ABYSSAL LEGENDS - クエスト画面と、バトル画面の「次の目標」 */
 (function (G) {
@@ -8226,14 +8547,15 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     var old = document.getElementById('title-screen'); if (old) old.remove();
     AL.Game.paused = true;
     UI.titleOpen = true;
-    UI.titleWarnShown = AL.Game.loadWarnings.length;   // タイトル画面で表示したお知らせの件数（開始後に同じものを出さないため）
+    UI.titleWarnShown = AL.Game.loadWarnings.length;   // タイトル画面で表示した「セーブデータについて」の件数（開始後に同じものを出さないため）
     var el = document.createElement('div');
     el.id = 'title-screen';
     el.innerHTML = '<div class="t-logo">ABYSSAL<br>LEGENDS</div><div class="t-sub">INFINITE ABYSS</div>' +
       '<div class="t-btns"><button class="btn primary" data-title="new"' + (isNew ? '' : ' disabled') + '>NEW GAME</button>' +
       '<button class="btn" data-title="continue"' + (isNew ? ' disabled' : '') + '>CONTINUE</button></div>' +
-      // 読み込み時のお知らせ（セーブを読み込めなかった・バックアップから復元した等）は、始める前にここで知らせる
-      (AL.Game.loadWarnings.length ? '<div class="notice t-warn" role="alert"><b>お知らせ</b><ul>' +
+      // 読み込み時の「セーブデータについて」（セーブを読み込めなかった・バックアップから復元した等）は、始める前にここで知らせる
+      // （公式のお知らせ js/ui/news.js と区別するため、1.12.0 で題を「お知らせ」から変更）
+      (AL.Game.loadWarnings.length ? '<div class="notice t-warn" role="alert"><b>セーブデータについて</b><ul>' +
         AL.Game.loadWarnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul></div>' : '') +
       '<div class="t-note tiny sub">' + (isNew ? '深淵の塔の頂を目指す、放置型の冒険が始まります。'
         : 'この端末のセーブデータから続きを遊べます。最初からやり直すときは、設定画面の「データの初期化」を使ってください。') + '</div>' +
@@ -8252,12 +8574,13 @@ G.AL = G.AL || {}; G.AL.PixelFX = __pixelfx;
     AL.Game.paused = false;
     AL.Game.lastReal = Date.now();
     if (AL.RankingSync) AL.RankingSync.start();   // ランキングに参加していれば、オフライン中に伸びた記録を送る（参加していなければ何もしない）
+    if (UI.newsStart) UI.newsStart();             // お知らせを裏で取得する（間隔内なら通信しない。ポップアップは出さない）
     UI.settlePower();   // 開始直後の自動レベルアップによる総戦力の変化は、増減として出さない
     UI.renderNav();
     if (!AL.Guide.unlocked(UI.st(), UI.current)) UI.show('battle');
-    // タイトル画面で表示したお知らせは繰り返さず、タイトル画面の表示後に加わったものだけを表示する
+    // タイトル画面で表示した「セーブデータについて」は繰り返さず、タイトル画面の表示後に加わったものだけを表示する
     var rest = AL.Game.loadWarnings.slice(UI.titleWarnShown || 0);
-    if (rest.length) UI.modal({ title: 'お知らせ', html: '<ul class="small">' + rest.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>' });
+    if (rest.length) UI.modal({ title: 'セーブデータについて', html: '<ul class="small">' + rest.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>' });
     AL.Game.loadWarnings = [];
     UI.titleWarnShown = 0;
     if (AL.Game.pendingIdle) UI.showIdle();

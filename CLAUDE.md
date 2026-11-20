@@ -1,7 +1,7 @@
 # ABYSSAL LEGENDS 開発ルール
 
 ダークファンタジー放置RPG。ゲーム本体は `index.html` の1ファイルのみ（CSS・JS・画像をすべて内包）で、
-GitHub Pages が `main` ブランチから公開しています。`main` に入った変更はそのまま公開サイトに出ます。
+GitHub Pages が `main` ブランチから公開しています（お知らせの内容だけは別ファイル `news.json`。「お知らせのルール」）。`main` に入った変更はそのまま公開サイトに出ます。
 `main` はルールセットで保護されています（PR 必須・`test` 成功必須）。
 
 ## 標準の開発・公開手順
@@ -23,7 +23,7 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
 8. **ユーザーが「公開して」と明示したときだけマージする。** テスト済みのコミットが PR の最新であることを確かめてからマージする。
 9. **マージ後、Pages の公開結果を確認する。**
    - `pages build and deployment` の build・deploy が成功していること。
-   - build ログの公開ファイル一覧が `index.html`・`README.md`・`og-image.png`・`assets/css/style.css` だけであること。
+   - build ログの公開ファイル一覧が `index.html`・`README.md`・`og-image.png`・`news.json`・`assets/css/style.css` だけであること。
    - Claude Code のクラウド環境からは公開URL（`github.io`）に接続できないことがあるため、その場合はスマホでの確認
      （設定画面のバージョン表示・既存セーブの引き継ぎ）をユーザーに依頼する。
 
@@ -69,7 +69,7 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
 - **実データや個人情報を、コミット・PR の説明・コメントに含めない。** 実際のセーブ書き出しファイル、
   そこから抽出・加工したデータ、メールアドレスなどの個人情報が対象。リポジトリは公開されている。
 - テストのためだけにゲーム本体（`index.html`）を変更しない。
-- **公開サイトに出すのはゲーム本体と README、共有用のリンクカード画像 `og-image.png`（1200×630。`index.html` の OGP・X Card が参照）だけにする。** Pages は `main` を Jekyll で公開するため、
+- **公開サイトに出すのはゲーム本体と README、共有用のリンクカード画像 `og-image.png`（1200×630。`index.html` の OGP・X Card が参照）、お知らせの `news.json`（1.12.0）だけにする。** Pages は `main` を Jekyll で公開するため、
   開発・テスト用のファイルを追加したら `_config.yml` の `exclude` にも追加する
   （`.` や `_` で始まるファイル・ディレクトリはもともと公開されない）。`npm test` がこれを自動で確認する。
 
@@ -130,6 +130,27 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
   運営が記録を消していたら、この端末の参加情報を消して参加前に戻す。
 - `firebase/`（ルール・インデックス・エミュレーターの設定）は `_config.yml` の `exclude` に入れ、公開しない。
 
+## お知らせのルール
+
+- 公式のお知らせ（1.12.0）。取得・検証・既読の保存は `AL.News`（`js/core/news.js`）、画面は `js/ui/news.js`。
+  入口はスマートフォンでは「その他」画面のタイトル直下の横長のボタン（「報 お知らせ」。3×3 のタイルは変えない）、PC では上部メニューの「ガチャ」の右（`UI.NAV_ORDER`）。
+  未読があれば、下部ナビの「その他」と PC の「お知らせ」に赤い点（数字のバッジ `.badge` とは別の `.nw-dot`）を出す。導入（はじめての冒険）中も読める。
+  **起動時にポップアップは出さない。** 通信の失敗でエラーの通知（トースト）も出さない。
+  **ゲームの状態（`AL.Game.state`）・セーブ・戦闘・乱数（`U.rng`）・ランキングには触れない**（`tests/news.test.mjs` がソースの参照を確認する）。セーブへの影響は A。
+- **お知らせの内容はリポジトリ直下の `news.json`**（公開 URL は `https://rikuink000-collab.github.io/abyssal-legends/news.json`。ゲームからは相対パス `news.json` で取得）。
+  ゲームのコードを変えずに、`news.json` の PR だけで配信できる（`npm test` が形式を確認するので、PR・`test` 成功・「公開して」の手順は同じ）。GAME_VERSION は上げなくてよい。
+  - 形：`{ "v": 1, "items": [ { "id", "cat", "date", "title", "body", "pin"(任意) } ] }`。`cat` は `important`（重要）・`update`（アップデート）・`maint`（メンテナンス）・`event`（イベント）。
+    `date` は `YYYY-MM-DD`（公開する日）。`id` は英数字・`-`・`_`（64文字まで）。上限はタイトル60文字・本文2000文字・表示100件・ファイル全体10万文字（`AL.News.LIMITS`）。
+  - **一度出した `id` は変えない・使い回さない**（既読がずれる）。本文は文字だけ（HTML・リンクは使えない。改行はそのまま表示）。並びは `pin` が先頭、次に日付の新しい順、同じ日付はファイルの順。
+  - Jekyll の前置き（`---`）を書かない。セーブ書き出しの形式名（`ABYSSAL_LEGENDS_SAVE`）を本文に書かない（テストがセーブの書き出しと誤判定する）。
+  - 公開後、GitHub Pages の配信側のキャッシュで反映に最大10分ほどかかることがある。
+- 取得は、タイトル画面から始めたあと（裏で1回）と、お知らせ画面を開いたとき。前回の取得から5分以内は通信しない（`AL.CONFIG.NEWS.INTERVAL_SEC`）。
+  `fetch` は `cache: 'no-cache'`・タイムアウト10秒。不正な1件は捨て、全体が読めなければ前回の一覧を保つ。例外を外に出さない。
+- **既読と前回取得した一覧は、セーブとは別のキー `abyssal_legends_news` に保存する**（`{ v:1, read:[ID…最大300件], cache:{ items, fetchedAt } }`）。セーブ本体・書き出しテキストには入れない。
+  **データの初期化（`Save.wipe`）で消さない。** 壊れていたら黙って作り直す（全件が未読に戻るだけ）。
+- 表示する文字はすべて `esc()` を通し、HTML として解釈しない。
+- 起動時のセーブの警告（読み込めなかった・復元した等）の題は「セーブデータについて」（1.12.0 で「お知らせ」から変更。公式のお知らせと区別するため）。
+
 ## テスト
 
 - `npm test`：`tests/smoke.mjs`（Playwright の Chromium、iPhone 13 相当の画面）と `tests/*.test.mjs`（Node.js）を実行する。
@@ -137,7 +158,7 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
   - 保存キーと移行処理の整合性
   - セーブの保存・再読み込み・書き出しファイルの読み込み
   - 合成セーブ `tests/fixtures/save-v3.json` の重要データ（通貨・階層・仲間・装備・転生・実績など）が読み込み後に失われないこと
-  - GitHub Pages の公開対象が `index.html`・`README.md`・`og-image.png` だけであること（`_config.yml` の `exclude` を検証）
+  - GitHub Pages の公開対象が `index.html`・`README.md`・`og-image.png`・`news.json` だけであること（`_config.yml` の `exclude` を検証。完全一致）
   - リポジトリ内のテスト用セーブが合成データ（`_fixture: "synthetic..."`）であり、
     実際のセーブ書き出しファイルが含まれていないこと
 - 変更に合わせて追加するテスト
@@ -174,6 +195,11 @@ GitHub Pages が `main` ブランチから公開しています。`main` に入�
   `tests/smoke.mjs` の「ランキング」で確認する（`googleapis.com` への通信はすべて偽の Firebase で受ける）。見た目は `test-results/phone-ranking-*.png` を目で確認する。
 - `npm run test:rules`（`tests/ranking-rules.emu.mjs`）：Firebase エミュレーター（認証・Firestore。`firebase-tools`、Java 21 以上が必要）の上で、`AL.Ranking` の参加〜削除と、ルールの6項目
   （本人だけ・範囲・増える方向だけ・60秒・伸び幅・hidden）を確認する。プロジェクト ID は `demo-` で始まるエミュレーター専用の値で、本物の Firebase には接続しない。GitHub Actions の `test` でも実行する。
+- `tests/news.test.mjs`：お知らせ（偽の取得先）。設定値、リポジトリの `news.json` の形式（全件が検証を通る・ID の重複なし・最初のお知らせの文面）、壊れた JSON・不正な項目・ID の重複・並び・100件の上限・制御文字、
+  既読（二重記録しない・すべて既読・再読み込み・300件の上限）、保存領域の破損、取得の間隔（5分・再読み込み後も・時刻の巻き戻り）と同時呼び出し、通信の失敗（HTTP・通信不能・時間切れ・壊れた JSON・例外）で前回の一覧を保つこと、
+  初期化・取り込みで既読が消えないこと、セーブ・書き出しに入らないこと、ソースの参照（状態・セーブ・乱数・ランキングに触れない）、ランキングのキーを使わないことを確認する。
+  画面（「その他」のボタンと 3×3 のタイル・360/390/430px・PC の位置・一覧・詳細・既読と赤い点・HTML を解釈しないこと・長文・大量・通信の失敗と遅延・導入中・ポップアップを出さないこと・セーブの不変）は
+  `tests/smoke.mjs` の「お知らせ」で確認する（一時サーバーがリポジトリの `news.json` を配信し、テストごとに `page.route` で差し替える）。見た目は `test-results/phone-news-*.png`・`pc-news-*.png` を目で確認する。
 - `tests/save-recovery.test.mjs`：架空の localStorage（テストごとに新しく作り、書き込み失敗などを仕込める）で、
   読み込み失敗時の復元、退避キーの衝突、退避の失敗と保護状態、バックアップの扱いを確認する。
   `tests/load-core.mjs` が index.html のゲームロジックを Node.js に読み込む（index.html は変更しない）。
